@@ -12,7 +12,6 @@ class PoseEncoder(nn.Module):
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
         self.fc3 = nn.Linear(hidden_dim, latent_dim)
 
-
     def forward(self, pose):
         x = F.relu(self.fc1(pose))
         # x = self.bn1(x)
@@ -34,7 +33,7 @@ class SiamesePoseControlNet(nn.Module):
         self.current_encoder.apply(self.current_encoder.init_weights)
 
         self.goal_encoder = PoseEncoder(input_dim=goal_pose_dim, latent_dim=latent_dim)
-        self.goal_encoder.apply(self.current_encoder.init_weights)
+        self.goal_encoder.apply(self.goal_encoder.init_weights)
 
         self.control_head = nn.Sequential(
             nn.Linear(2 * latent_dim, latent_dim),
@@ -81,14 +80,12 @@ class OnlineTrainer:
             f"Shape mismatch: predicted {predicted_control.shape}, true {true_control.shape}"
         error_pose = np.array(error_pose)
         state_loss = np.linalg.norm(error_pose)
-
         # Compute MSE loss between the batch of predicted and true control commands
         loss = self.loss_fn(predicted_control, true_control) + 0.0 * state_loss
 
         # Perform the backward pass and optimize
         self.optimizer.zero_grad()  # Reset gradients
         loss.backward()  # Backpropagate gradients
-
         # Compute the norm of gradients
         total_norm = 0.0
         for param in self.model.parameters():
