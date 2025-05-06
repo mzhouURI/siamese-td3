@@ -100,5 +100,5 @@ class OnlineTrainer:
         return loss.item()
 
     def save_model(self):
-        torch.save(self.model.state_dict(), "siamese_pose_control_net.pth")
+        torch.save(self.model.state_dict(), "offline_siamese_model.pth")
         

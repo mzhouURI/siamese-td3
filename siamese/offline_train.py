@@ -15,9 +15,12 @@ def get_batches(error_states, states, actions, indices, batch_size):
         yield batch_error_states, batch_states, batch_actions
 
 data = np.loadtxt('data/filename1.csv', delimiter=',')
-
+# 0:12: t, ex, ey, ez, e_roll, e_pitch, e_yaw, e_u, e_v, e_w, e_p, e_q, e_r
+#13-15: x,y,z,
+#16:18: roll, pitch, yaw, 
+#19:24 u,v,w,p,q,r
 error_states = data[:, [3,5,6,7]]
-states = data[:, 16:25]
+states = data[:, 15:25] 
 actions = data[:, -4:]
 
 # print(error_states.shape)
@@ -37,10 +40,11 @@ training_data = np.hstack((error_states, states, actions))
 # nan_row_indices = np.where(rows_with_nan)[0]
 # print("Rows with NaN:", nan_row_indices)
 
+# exit()
 # print(training_data[1,:])
 batch_size = 64  # Choose a batch size
 ep_loss = []
-for i in range(30):
+for i in range(50):
     # Shuffle the data by generating a random permutation of indices
     indices = np.random.permutation(len(training_data))
 

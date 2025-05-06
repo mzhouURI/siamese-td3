@@ -6,6 +6,10 @@ import random
 import copy
 from collections import deque
 from critic import Critic
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'siamese')))
+
 from siamese import SiamesePoseControlNet
 
 

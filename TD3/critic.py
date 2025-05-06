@@ -4,11 +4,12 @@ import torch
 class Critic(nn.Module):
     def __init__(self, state_dim, error_dim, action_dim):
         super().__init__()
+        hidden_dim = 128
         input_dim = state_dim + error_dim + action_dim
         self.ln1 = nn.LayerNorm(input_dim)
-        self.linear1 = nn.Linear(input_dim, 128)
-        self.linear2 = nn.Linear(128, 128)
-        self.output_layer = nn.Linear(128, 1)
+        self.linear1 = nn.Linear(input_dim, hidden_dim)
+        self.linear2 = nn.Linear(hidden_dim, hidden_dim)
+        self.output_layer = nn.Linear(hidden_dim, 1)
 
     def forward(self, state, goal, action):
         x = torch.cat([state, goal, action], dim=1)

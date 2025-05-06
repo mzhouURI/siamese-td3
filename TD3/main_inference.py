@@ -1,6 +1,8 @@
 import time
 import numpy as np
-from siamese import SiamesePoseControlNet, OnlineTrainer
+import os
+import sys
+
 import rclpy
 from rclpy.node import Node
 from mvp_msgs.msg import ControlProcess
@@ -11,6 +13,9 @@ from scipy.spatial.transform import Rotation as R
 from std_msgs.msg import Float64, Float64MultiArray
 import torch
 from collections import deque
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'siamese')))
+from siamese import SiamesePoseControlNet
 
 class DDPG_ROS(Node):
     def __init__(self):
@@ -43,7 +48,7 @@ class DDPG_ROS(Node):
         self.batch_size = 32
 
         state = {
-            # 'z': (0),
+            'z': (0),
             'euler': (0,0,0), # Quaternion (x, y, z, w)
             'uvw': (0,0,0),
             'pqr': (0,0,0)
@@ -116,7 +121,7 @@ class DDPG_ROS(Node):
     def state_callback(self, msg):
 
         state = {
-            # 'z': (msg.position.z),
+            'z': (msg.position.z),
             'euler': (msg.orientation.x, msg.orientation.y, msg.orientation.z), 
             'uvw': (msg.velocity.x, msg.velocity.y, msg.velocity.z),
             'pqr': {msg.angular_rate.x, msg.angular_rate.y, msg.angular_rate.z}

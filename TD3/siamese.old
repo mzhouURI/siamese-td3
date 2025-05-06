@@ -12,7 +12,6 @@ class PoseEncoder(nn.Module):
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
         self.fc3 = nn.Linear(hidden_dim, latent_dim)
 
-
     def forward(self, pose):
         x = F.relu(self.fc1(pose))
         # x = self.bn1(x)

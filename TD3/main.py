@@ -49,16 +49,11 @@ class TD3_ROS(Node):
         self.batch_warmup_size =self.batch_size*1
         self.set_point_update_flag = False
         state = {
-            # 'z': (0),
+            'z': (0),
             'euler': (0,0,0), # Quaternion (x, y, z, w)
             'uvw': (0,0,0),
             'pqr': (0,0,0)
         }
-        # state = {
-        #     'z': (0),
-        #     'euler': (0,0), # Quaternion (x, y, z, w)
-        #     'u': (0)
-        # }
         error_state = {
              'z': (0),
             'euler': (0,0), # Quaternion (x, y, z, w)
@@ -71,11 +66,11 @@ class TD3_ROS(Node):
         self.prev_state = torch.zeros(len(self.state))
         device = torch.device("cpu")
         self.model = TD3Agent(len(self.state), len(self.error_state), 4, 1, device=device, 
-                            #   actor_ckpt='05-03-siamese.pth',
-                              actor_ckpt='05-05-offline.pth',
-                            #   actor_lr = 1e-7, critic_lr= 1e-6)
-                            #   actor_lr = 4e-8, critic_lr= 4e-8)
+                              actor_ckpt='offline_siamese_model.pth',
+                            #   actor_ckpt='05-05-offline.pth',
+                            #   actor_lr = 1e-7, critic_lr= 1e-5, policy_delay=2)
                               actor_lr = 1e-7, critic_lr= 1e-4, policy_delay=2)
+        
         self.total_reward = 0
 
         # self.timer_model_save = self.create_timer(100, self.save_model)
@@ -93,7 +88,7 @@ class TD3_ROS(Node):
         set_controller = SetBool.Request()
         set_controller.data = req
         future = self.set_controller.call_async(set_controller)
-        # rclpy.spin_until_future_complete(self, future)
+        # rclpy.spin_until_action_dimfuture_complete(self, future)
         return future.result()
     
     def set_point_update(self):
@@ -135,7 +130,7 @@ class TD3_ROS(Node):
     def state_callback(self, msg):
 
         state = {
-            # 'z': (msg.position.z),
+            'z': (msg.position.z),
             'euler': (msg.orientation.x, msg.orientation.y, msg.orientation.z), 
             'uvw': (msg.velocity.x, msg.velocity.y, msg.velocity.z),
             'pqr': {msg.angular_rate.x, msg.angular_rate.y, msg.angular_rate.z}
@@ -205,7 +200,7 @@ class TD3_ROS(Node):
         current_error = error_pose.view(-1,1)
 
         # Define a weight matrix W: shape [3, 3]
-        w_z = 3.0
+        w_z = 5.0
         w_pitch = 1.0
         w_yaw = 1.0
         w_u = 10.0
