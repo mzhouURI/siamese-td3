@@ -200,9 +200,9 @@ class TD3_ROS(Node):
         current_error = error_pose.view(-1,1)
 
         # Define a weight matrix W: shape [3, 3]
-        w_z = 5.0
+        w_z = 10.0
         w_pitch = 1.0
-        w_yaw = 1.0
+        w_yaw = 2.0
         w_u = 10.0
         # Create diagonal weight matrix W
         W = torch.diag(torch.tensor([w_z, w_pitch, w_yaw, w_u]))
