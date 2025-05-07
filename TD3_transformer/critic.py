@@ -15,8 +15,8 @@ class CriticTransformer(nn.Module):
         self.pos_encoding = nn.Parameter(torch.randn(seq_len, hidden_dim))
 
         # Embeddings for state, error, and action
-        self.state_embedding = nn.Linear(state_dim, hidden_dim)
-        self.error_embedding = nn.Linear(error_dim, hidden_dim)
+        # self.state_embedding = nn.Linear(state_dim, hidden_dim)
+        # self.error_embedding = nn.Linear(error_dim, hidden_dim)
         self.input_proj = nn.Linear(self.state_dim + error_dim + action_dim, hidden_dim)
         
         # Transformer Encoder Layer
@@ -70,7 +70,7 @@ class CriticTransformer(nn.Module):
 
         x = torch.cat([state, error, action], dim=-1)  # (B, T, state_dim + action_dim)
         x = self.input_proj(x)  # (B, T, d_model)
-        x = x + self.pos_encoding.unsqueeze(0)  # (B, T, d_model)
+        # x = x + self.pos_encoding.unsqueeze(0)  # (B, T, d_model)
 
         # Transformer Encoder
         x = self.transformer_encoder(x)  # (B, T, d_model)

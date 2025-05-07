@@ -47,11 +47,17 @@ class TD3_ROS(Node):
         self.batch_size = 64
         self.batch_warmup_size =self.batch_size*1
         self.set_point_update_flag = False
+        # state = {
+        #     'z': (0),
+        #     'euler': (0,0,0), # Quaternion (x, y, z, w)
+        #     'uvw': (0,0,0),
+        #     'pqr': (0,0,0)
+        # }
         state = {
-            'z': (0),
-            'euler': (0,0,0), # Quaternion (x, y, z, w)
-            'uvw': (0,0,0),
-            'pqr': (0,0,0)
+             'z': (0),
+            'euler': (0,0), # Quaternion (x, y, z, w)
+            'u': (0, 0),
+            'pqr': (0)
         }
         error_state = {
              'z': (0),
@@ -63,7 +69,7 @@ class TD3_ROS(Node):
         self.prev_action = torch.zeros(4)
         self.prev_error_state = torch.zeros(len(self.error_state))
         self.prev_state = torch.zeros(len(self.state))
-        self.window_size = 49
+        self.window_size = 10
         self.state_buffer = collections.deque(maxlen=self.window_size)
         self.error_state_buffer = collections.deque(maxlen=self.window_size)
 
@@ -72,7 +78,7 @@ class TD3_ROS(Node):
                                 hidden_dim = 32, num_layers = 2,
                                 action_dim = 4, device = self.device,
                                 actor_ckpt = 'actor_transformer.pth',
-                                actor_lr = 1e-7, critic_lr= 1e-4,  tau = 0.001, noise_std= 0.05, policy_delay=2,
+                                actor_lr = 1e-7, critic_lr= 1e-3,  tau = 0.001, noise_std= 0.05, policy_delay=10,
                                 seq_len = self.window_size)
 
         
@@ -130,11 +136,17 @@ class TD3_ROS(Node):
 
     def state_callback(self, msg):
 
+        # state = {
+        #     'z': (msg.position.z),
+        #     'euler': (msg.orientation.x, msg.orientation.y, msg.orientation.z), 
+        #     'uvw': (msg.velocity.x, msg.velocity.y, msg.velocity.z),
+        #     'pqr': {msg.angular_rate.x, msg.angular_rate.y, msg.angular_rate.z}
+        # }
         state = {
             'z': (msg.position.z),
-            'euler': (msg.orientation.x, msg.orientation.y, msg.orientation.z), 
-            'uvw': (msg.velocity.x, msg.velocity.y, msg.velocity.z),
-            'pqr': {msg.angular_rate.x, msg.angular_rate.y, msg.angular_rate.z}
+            'euler': (msg.orientation.y, msg.orientation.z),  
+            'u': (msg.velocity.x, msg.velocity.z),
+            'pqr': (msg.angular_rate.z)
         }
         self.state = self.flatten_state(state)
 
@@ -203,16 +215,16 @@ class TD3_ROS(Node):
         current_error = error_pose.view(-1,1)
 
         # Define a weight matrix W: shape [3, 3]
-        w_z = 10.0
-        w_pitch = 1.0
-        w_yaw = 5.0
-        w_u = 10.0
+        w_z = 0.5
+        w_pitch = 1
+        w_yaw = 0.6
+        w_u = 1.0
         # Creat diagonal weight matrix W
         W = torch.diag(torch.tensor([w_z, w_pitch, w_yaw, w_u]))
         # Compute quadratic form: error^T * W * error -> scalar tensor
         error_reward = torch.matmul(new_error.T, torch.matmul(W, new_error)).item()  # shape [1, 1]
 
-        reward = - error_reward
+        reward = - 100*error_reward
         return reward
 
 

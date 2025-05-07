@@ -151,6 +151,7 @@ class TD3Agent:
             # Compute target Q values
             next_action = next_action.to(self.device).float()
             full_action_seq = action.clone()  # [64, n, 4] (copy of the original action sequence)
+            full_action_seq[:,:-1,:] = action[:, 1:, :]
             full_action_seq[:, -1, :] = next_action  # [64, n, 4]
 
             target_q1 = self.target_critic1(next_state, next_error, full_action_seq)
@@ -158,7 +159,7 @@ class TD3Agent:
             
             #take the last reward
             
-            last_reward = last_reward.unsqueeze(1)  # [64, 1] (adds an extra dimension for consistency)
+            last_reward = last_reward.unsqueeze(1)  
             # print(f"last reward shape: {last_reward.shape}")
 
             # Compute target Q values

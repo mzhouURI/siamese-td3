@@ -37,12 +37,18 @@ class ActorROS(Node):
 
         self.thrust_cmd = []
 
+        # state = {
+        #     'z': (0),
+        #     'euler': (0,0,0), # Quaternion (x, y, z, w)
+        #     'uvw': (0,0,0),
+        #     # 'uvw': (0),
+        #     'pqr': (0,0,0)
+        # }
         state = {
-            'z': (0),
-            'euler': (0,0,0), # Quaternion (x, y, z, w)
-            'uvw': (0,0,0),
-            # 'uvw': (0),
-            'pqr': (0,0,0)
+             'z': (0),
+            'euler': (0,0), # Quaternion (x, y, z, w)
+            'u': (0, 0),
+            'pqr': (0)
         }
         error_state = {
              'z': (0),
@@ -61,11 +67,13 @@ class ActorROS(Node):
                                 hidden_dim = 32, num_layers = 2,
                                 output_dim = 4).to(self.device)
 
-        self.model.load_state_dict(torch.load("actor_transformer.pth"))
+        # self.model.load_state_dict(torch.load("actor_transformer.pth"))
+        self.model.load_state_dict(torch.load("model/actor.pth"))
+
         self.model.eval()
 
         #setup sequence buffer
-        self.window_size = 49
+        self.window_size = 10
         # Buffer to store the last N actions and states
         # self.action_buffer = collections.deque(maxlen=self.window_size)
         self.state_buffer = collections.deque(maxlen=self.window_size)
@@ -117,11 +125,17 @@ class ActorROS(Node):
 
     def state_callback(self, msg):
 
+        # state = {
+        #     'z': (msg.position.z),
+        #     'euler': (msg.orientation.x, msg.orientation.y, msg.orientation.z), 
+        #     'uvw': (msg.velocity.x, msg.velocity.y, msg.velocity.z),
+        #     'pqr': {msg.angular_rate.x, msg.angular_rate.y, msg.angular_rate.z}
+        # }
         state = {
             'z': (msg.position.z),
-            'euler': (msg.orientation.x, msg.orientation.y, msg.orientation.z), 
-            'uvw': (msg.velocity.x, msg.velocity.y, msg.velocity.z),
-            'pqr': {msg.angular_rate.x, msg.angular_rate.y, msg.angular_rate.z}
+            'euler': (msg.orientation.y, msg.orientation.z),  
+            'u': (msg.velocity.x, msg.velocity.z),
+            'pqr': (msg.angular_rate.z)
         }
         self.state = self.flatten_state(state)
 
