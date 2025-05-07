@@ -63,7 +63,7 @@ class TD3_ROS(Node):
         self.prev_action = torch.zeros(4)
         self.prev_error_state = torch.zeros(len(self.error_state))
         self.prev_state = torch.zeros(len(self.state))
-        self.window_size = 20
+        self.window_size = 49
         self.state_buffer = collections.deque(maxlen=self.window_size)
         self.error_state_buffer = collections.deque(maxlen=self.window_size)
 
@@ -72,8 +72,8 @@ class TD3_ROS(Node):
                                 hidden_dim = 32, num_layers = 2,
                                 action_dim = 4, device = self.device,
                                 actor_ckpt = 'actor_transformer.pth',
-                                actor_lr = 1e-7, critic_lr= 1e-4,  tau = 0.001, noise_std= 0.05, policy_delay=2
-                                )
+                                actor_lr = 1e-7, critic_lr= 1e-4,  tau = 0.001, noise_std= 0.05, policy_delay=2,
+                                seq_len = self.window_size)
 
         
         self.total_reward = 0
@@ -205,9 +205,9 @@ class TD3_ROS(Node):
         # Define a weight matrix W: shape [3, 3]
         w_z = 10.0
         w_pitch = 1.0
-        w_yaw = 2.0
+        w_yaw = 5.0
         w_u = 10.0
-        # Create diagonal weight matrix W
+        # Creat diagonal weight matrix W
         W = torch.diag(torch.tensor([w_z, w_pitch, w_yaw, w_u]))
         # Compute quadratic form: error^T * W * error -> scalar tensor
         error_reward = torch.matmul(new_error.T, torch.matmul(W, new_error)).item()  # shape [1, 1]

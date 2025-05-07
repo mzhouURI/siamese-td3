@@ -42,7 +42,7 @@ class TD3Agent:
     def __init__(self, state_dim, error_dim, action_dim, max_action = 1, device = 'cpu',
                  actor_ckpt = None,
                  hidden_dim = 32, num_layers = 2,
-                 actor_lr=1e-4, critic_lr=1e-3, tau=0.005, gamma=0.99, noise_std=0.2, policy_delay=2):
+                 actor_lr=1e-4, critic_lr=1e-3, tau=0.005, gamma=0.99, noise_std=0.2, policy_delay=2, seq_len =10):
        
         # Initialize actor
         self.actor = ActorTransformer(state_dim = state_dim, error_dim = error_dim, output_dim = action_dim,
@@ -54,10 +54,16 @@ class TD3Agent:
 
         #initialize critic
         self.critic1 = CriticTransformer(state_dim = state_dim, error_dim = error_dim, action_dim = action_dim,
-                                        hidden_dim = hidden_dim, num_layers = num_layers).to(device)
+                                        hidden_dim = hidden_dim, num_layers = num_layers, seq_len=seq_len).to(device)
                                          
         self.critic2 = CriticTransformer(state_dim = state_dim, error_dim = error_dim, action_dim = action_dim,
-                                        hidden_dim = hidden_dim, num_layers = num_layers).to(device)
+                                        hidden_dim = hidden_dim, num_layers = num_layers, seq_len=seq_len).to(device)
+        
+        # self.critic1 = CriticTransformer(state_dim = state_dim, error_dim = error_dim, action_dim = action_dim,
+        #                                 hidden_dim = hidden_dim).to(device)
+                                         
+        # self.critic2 = CriticTransformer(state_dim = state_dim, error_dim = error_dim, action_dim = action_dim,
+        #                                 hidden_dim = hidden_dim).to(device)
         
         self.target_critic1 = copy.deepcopy(self.critic1)
         self.target_critic2 = copy.deepcopy(self.critic2)
@@ -118,6 +124,13 @@ class TD3Agent:
         next_error = next_error.to(self.device).float()
         done = done.to(self.device).float()
 
+        state_last = state[:,-1,:]
+        error_last = error[:,-1,:]
+        next_state_last = next_state[:,-1,:]
+        next_error_last = next_error[:,-1,:]
+        last_reward = reward[:, -1]        
+        last_action = action[:,-1,:]
+
         # print(f"State shape: {state.shape}")
         # print(f"Error shape: {error.shape}")
         # print(f"Action shape: {action.shape}")
@@ -129,18 +142,22 @@ class TD3Agent:
         # Get target Q-values from target critics
         with torch.no_grad():
             next_action = self.target_actor(next_state, next_error)
-
+            # print(f"next action shape: {next_action.shape}")
             # Add clipped noise
             noise = torch.normal(0, policy_noise, size=next_action.shape).to(next_action.device)
             noise = noise.clamp(-noise_clip, noise_clip)
             next_action = (next_action + noise).clamp(-self.max_action, self.max_action)
-
+            
             # Compute target Q values
-            target_q1 = self.target_critic1(next_state, next_error, next_action)
-            target_q2 = self.target_critic2(next_state, next_error, next_action)
+            next_action = next_action.to(self.device).float()
+            full_action_seq = action.clone()  # [64, n, 4] (copy of the original action sequence)
+            full_action_seq[:, -1, :] = next_action  # [64, n, 4]
+
+            target_q1 = self.target_critic1(next_state, next_error, full_action_seq)
+            target_q2 = self.target_critic2(next_state, next_error, full_action_seq)
             
             #take the last reward
-            last_reward = reward[:, -1]
+            
             last_reward = last_reward.unsqueeze(1)  # [64, 1] (adds an extra dimension for consistency)
             # print(f"last reward shape: {last_reward.shape}")
 
@@ -149,9 +166,8 @@ class TD3Agent:
 
         # Critic loss (MSE between predicted Q-values and target Q-values)
         #take the last action from action sequence
-        last_action = action[:, -1, :]  # Shape: [64, 4]
-        q1 = self.critic1(state, error, last_action)
-        q2 = self.critic2(state, error, last_action)
+        q1 = self.critic1(state, error, action)
+        q2 = self.critic2(state, error, action)
 
         critic1_loss = nn.MSELoss()(q1, target_q)
         critic2_loss = nn.MSELoss()(q2, target_q)
@@ -182,7 +198,8 @@ class TD3Agent:
         if self.total_it % self.policy_delay == 0:
                 # Actor loss (maximize Q from critic1)
                 actor_action = self.actor(state, error)
-                actor_loss = -self.critic1(state, error, actor_action).mean()
+                full_action_seq[:, -1, :] = actor_action  # [64, n, 4]
+                actor_loss = -self.critic1(state, error, full_action_seq).mean()
 
                 self.actor_optimizer.zero_grad()
                 actor_loss.backward()

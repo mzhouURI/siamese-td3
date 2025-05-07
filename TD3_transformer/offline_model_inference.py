@@ -65,7 +65,7 @@ class ActorROS(Node):
         self.model.eval()
 
         #setup sequence buffer
-        self.window_size = 20
+        self.window_size = 49
         # Buffer to store the last N actions and states
         # self.action_buffer = collections.deque(maxlen=self.window_size)
         self.state_buffer = collections.deque(maxlen=self.window_size)

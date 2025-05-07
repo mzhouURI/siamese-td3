@@ -56,9 +56,9 @@ training_data = np.hstack((error_states, states, actions))
 # exit()
 # print(training_data[1,:])
 ep_loss = []
-seq_len = 20       # sequence length for transformer
+seq_len = 50       # sequence length for transformer
 batch_size = 64    # number of sequences per batch
-num_epochs = 20    # how many passes over the dataset
+num_epochs = 30    # how many passes over the dataset
 
 
 
@@ -75,8 +75,10 @@ for epoch in range(num_epochs):
         batch = batch.to(device)  # shape: (batch_size, seq_len, input_dim + action_dim)
 
         # Separate components
-        error_seq = batch[:, :, :error_dim]                             # (B, T, error_dim)
-        state_seq = batch[:, :, error_dim:error_dim + state_dim]       # (B, T, state_dim)
+        error_seq = batch[:, :-1, :error_dim]                             # (B, T, error_dim)
+        state_seq = batch[:, :-1, error_dim:error_dim + state_dim]       # (B, T, state_dim)
+        # print(error_seq.shape)
+        # exit()
         target_actions = batch[:, -1, -action_dim:]                    # (B, action_dim)
 
         # print(error_seq.shape)
