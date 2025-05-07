@@ -80,7 +80,7 @@ class TD3_ROS(Node):
 
         self.timer_setpoint_update = self.create_timer(60, self.set_point_update)
         self.timer_setpoint_pub = self.create_timer(1.0, self.set_point_publish)
-        self.timer_pub = self.create_timer(0.5, self.step)
+        self.timer_pub = self.create_timer(0.1, self.step)
 
         self.set_controller = self.create_client(SetBool, '/mvp2_test_robot/controller/set')  
         self.active_controller(True)

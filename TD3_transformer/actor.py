@@ -26,8 +26,7 @@ class ActorTransformer(nn.Module):
         # Embed the state and error
         state_emb = self.state_embedding(state)
         error_emb = self.error_embedding(error)
-        # print(state_emb.shape)
-        # print(error_emb.shape)
+
         # Concatenate the state and error embeddings (if needed for your task)
         x = state_emb + error_emb  # you could use torch.cat(state_emb, error_emb, dim=-1) instead if required
         # print(x.shape)
@@ -36,8 +35,8 @@ class ActorTransformer(nn.Module):
         
         # Pass through the transformer encoder
         x = self.transformer_encoder(x)
-
         # Get the output (from the first token for simplicity)
         output = self.output_layer(x[:, -1, :])     # predict from last token
+
         return output
     

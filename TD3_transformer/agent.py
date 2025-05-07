@@ -135,27 +135,23 @@ class TD3Agent:
             noise = noise.clamp(-noise_clip, noise_clip)
             next_action = (next_action + noise).clamp(-self.max_action, self.max_action)
 
-            print(f"Next action shape: {next_action.shape}")
-
             # Compute target Q values
             target_q1 = self.target_critic1(next_state, next_error, next_action)
             target_q2 = self.target_critic2(next_state, next_error, next_action)
-
-            target_q1_expanded = target_q1.expand(-1, 20)  # Shape: [64, 20]
-            target_q2_expanded = target_q2.expand(-1, 20)  # Shape: [64, 20]
-
-            # print(f"action: {action}")
-            print(f"reward_expanded shape: {reward.shape}")
-            print(f"done shape: {done.shape}")
-            print(f"q1 shape: {target_q1.shape}")
-            print(f"q2 shape: {target_q2.shape}")
             
+            #take the last reward
+            last_reward = reward[:, -1]
+            last_reward = last_reward.unsqueeze(1)  # [64, 1] (adds an extra dimension for consistency)
+            # print(f"last reward shape: {last_reward.shape}")
+
             # Compute target Q values
-            target_q = reward + self.gamma * torch.min(target_q1_expanded, target_q2_expanded) * (1 - done)
+            target_q = last_reward + self.gamma * torch.min(target_q1, target_q2)
 
         # Critic loss (MSE between predicted Q-values and target Q-values)
-        q1 = self.critic1(state, error, action)
-        q2 = self.critic2(state, error, action)
+        #take the last action from action sequence
+        last_action = action[:, -1, :]  # Shape: [64, 4]
+        q1 = self.critic1(state, error, last_action)
+        q2 = self.critic2(state, error, last_action)
 
         critic1_loss = nn.MSELoss()(q1, target_q)
         critic2_loss = nn.MSELoss()(q2, target_q)
@@ -175,9 +171,9 @@ class TD3Agent:
         self.critic2_optimizer.step()
 
         # Actor loss: maximize the Q-value predicted by the critics (using the actor's action)
-        action = self.actor(state, error)
-        q1 = self.critic1(state, error, action)
-        q2 = self.critic2(state, error, action)
+        # action = self.actor(state, error)
+        # q1 = self.critic1(state, error, action)
+        # q2 = self.critic2(state, error, action)
 
         # Actor loss: minimize the negative Q-value (maximize Q-value)
         actor_loss = torch.tensor(0.0)  # Default value if not updated
