@@ -70,7 +70,7 @@ class ActorROS(Node):
                                 output_dim = 4).to(self.device)
 
         # self.model.load_state_dict(torch.load("actor_transformer.pth"))
-        self.model.load_state_dict(torch.load("model1/actor.pth"))
+        self.model.load_state_dict(torch.load("model2/actor.pth"))
 
         self.model.eval()
 

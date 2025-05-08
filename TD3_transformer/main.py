@@ -85,7 +85,7 @@ class TD3_ROS(Node):
         
         self.total_reward = 0
 
-        self.timer_setpoint_update = self.create_timer(60, self.set_point_update)
+        self.timer_setpoint_update = self.create_timer(10, self.set_point_update)
         self.timer_setpoint_pub = self.create_timer(1.0, self.set_point_publish)
         self.timer_pub = self.create_timer(0.1, self.step)
 
@@ -167,7 +167,11 @@ class TD3_ROS(Node):
             #new pose and error pose
             new_state = torch.tensor(self.state, dtype=torch.float32).unsqueeze(0)
             new_error_state = torch.tensor(self.error_state, dtype=torch.float32).unsqueeze(0)
-            
+            if len(self.state_buffer) > 2:
+                # print(len(self.state_buffer))
+                # self.hist_error_state = torch.tensor(list(self.state_buffer), dtype=torch.float32)
+                self.buffer_tensor = torch.stack(list(self.error_state_buffer))
+                # print(buffer_tensor.shape)
             self.state_buffer.append(new_state)
             self.error_state_buffer.append(new_error_state)
             
@@ -176,23 +180,26 @@ class TD3_ROS(Node):
             context_states = torch.cat(list(self.state_buffer), dim=0).unsqueeze(0).to(self.device)
             context_errors = torch.cat(list(self.error_state_buffer), dim=0).unsqueeze(0).to(self.device)
 
-
             #action for the next round
             action = self.model.select_action(context_states, context_errors)
             msg = Float64MultiArray()
             msg.data = action.detach().cpu().numpy().flatten().tolist()                   
             self.thruster_pub.publish(msg)
-
+            reward = 0
             #error state reward
-            reward = self.calculate_reward(self.prev_error_state, new_error_state)
-
             done = False
+            ##detect set point changge, and clear the temporal buffer.
             if self.set_point_update_flag:
                 self.set_point_update_flag = False
                 print("skip this step")
+                self.state_buffer.clear()
+                self.error_state_buffer.clear()
             else:
-                self.model.replay_buffer.add(self.prev_state, self.prev_error_state, self.prev_action.detach().cpu().numpy(), 
-                                             reward, new_state, new_error_state, done)
+                # only store the data when the temporal buffer is filled and the reward is valid
+                if len(self.state_buffer) == self.window_size:
+                    reward = self.calculate_reward(self.prev_error_state, new_error_state, self.buffer_tensor)
+                    self.model.replay_buffer.add(self.prev_state, self.prev_error_state, self.prev_action.detach().cpu().numpy(), 
+                                                reward, new_state, new_error_state, done)
                 # print(reward)
             # print(new_state - self.prev_state)
             # print(new_error_state - self.prev_error_state)
@@ -211,9 +218,11 @@ class TD3_ROS(Node):
         # except Exception as e:
         #     self.get_logger().error(f"Error in step(): {e}")
 
-    def calculate_reward(self, error_pose, new_error_pose):
+    def calculate_reward(self, error_pose, new_error_pose, histo_error):
         new_error = new_error_pose.view(-1, 1)
         current_error = error_pose.view(-1,1)
+        histo_error = histo_error.squeeze(1)
+        # print(histo_error.shape)
 
         # Define a weight matrix W: shape [3, 3]
         w_z = 1.0
@@ -227,6 +236,12 @@ class TD3_ROS(Node):
         # error_reward = torch.norm(error_reward_w, p=2, dim=-1)
         # Compute quadratic form: error^T * W * error -> scalar tensor
         error_reward = torch.matmul(new_error.T, torch.matmul(W, new_error)).item()  # shape [1, 1]
+
+        W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32)
+        # print(W.shape)
+        # hist_reward =  histo_error * W
+        accum_squared_error = torch.sum((histo_error ** 2)*W)
+        # print(f"accum_squared_error: {accum_squared_error}")
 
         w_d_z = 1.0
         w_d_pitch = 1.0
@@ -248,8 +263,15 @@ class TD3_ROS(Node):
             bonus = 0
             # print("bonus")
 
-        reward = - 100*error_reward - 10*delta_reward + bonus
-        # print(f"reward: {reward}")
+        error_reward = 100*error_reward
+        delta_reward = 1000*delta_reward
+        accum_squared_error = 5*accum_squared_error
+        reward = -error_reward -delta_reward + bonus -accum_squared_error
+        print(f"error_reward: {error_reward: .4f}",
+              f"accum_squared_error: {accum_squared_error: .4f}",
+              f"delta_reward: {delta_reward: .4f}",
+              f"bonus: {bonus: .4f}")
+
         return reward
 
 

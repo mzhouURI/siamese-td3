@@ -174,10 +174,10 @@ class TD3Agent:
         critic1_loss = nn.MSELoss()(q1, target_q)
         critic2_loss = nn.MSELoss()(q2, target_q)
 
-        print(f"Average Q1: {q1.mean().item():.4f}",
-            f"Average Q2: {q2.mean().item():.4f}",
-            f"Average TQ: {target_q.mean().item():.4f}",
-            f"reward: {reward.mean().item():.4f}")
+        # print(f"Average Q1: {q1.mean().item():.4f}",
+        #     f"Average Q2: {q2.mean().item():.4f}",
+        #     f"Average TQ: {target_q.mean().item():.4f}",
+        #     f"reward: {reward.mean().item():.4f}")
         
         # Backpropagate and update critic networks
         self.critic1_optimizer.zero_grad()

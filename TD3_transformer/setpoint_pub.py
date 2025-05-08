@@ -11,11 +11,9 @@ class SetPointPublisher(Node):
         self.publisher_ = self.create_publisher(ControlProcess, '/mvp2_test_robot/controller/process/set_point', 10)
 
         self.interval = 100
-        self.set_depth = [-5.0, -5.0,  -5.0, -2.50,  -5.0, -5.0, 0.0]
-        # self.set_u =     [0.00, 0.15,  0.15, 0.15,  -0.15, -0.15, -0.15,  0.0, 0.0, 0.0]
-        self.set_u =     [0.00, 0.3,  0.3, 0.3,   0.0, 0.0, 0.0]
-
-        self.set_yaw =   [3.14, 3.14,  0.00, 0.00, 3.14, 0.0, 0.0]
+        self.set_depth = [-5.0, -5.0,  -5.0, -2.50,  -5.0,  -5.0, 0.0]
+        self.set_u =     [ 0.0,  0.3,   0.3,  0.3,    0.0,   0.0, 0.0]
+        self.set_yaw =   [3.14, 3.14,   0.0,  0.0,    3.14,  0.0, 0.0]
 
         #initial set point
         self.set_point = ControlProcess()
@@ -28,7 +26,7 @@ class SetPointPublisher(Node):
         self.set_point.position.z =self.set_depth[0]
         self.set_point.orientation.z = self.set_yaw[0]
         self.set_point.velocity.x = self.set_u[0]
-        self.set_counter = 1  # Start from 0
+        self.set_counter = 0  # Start from 0
         
         self.set_controller = self.create_client(SetBool, '/race2_auv/controller/set')  
         self.active_controller(True)
