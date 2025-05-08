@@ -5,6 +5,7 @@ import rclpy
 from rclpy.node import Node
 from mvp_msgs.msg import ControlProcess
 from std_srvs.srv import SetBool
+from std_msgs.msg import Bool
 import random
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -18,8 +19,9 @@ class ActorROS(Node):
         #initial set point
         self.subscription = self.create_subscription(ControlProcess, '/mvp2_test_robot/controller/process/value', self.state_callback, 1)
         self.subscription2 = self.create_subscription(ControlProcess, '/mvp2_test_robot/controller/process/error', self.state_error_callback, 1)
+        self.subscription3 = self.create_subscription(Bool, '/mvp2_test_robot/controller/state', self.controller_state_callback, 1)
 
-        self.set_point_pub = self.create_publisher(ControlProcess, '/mvp2_test_robot/controller/process/set_point', 3)
+        # self.set_point_pub = self.create_publisher(ControlProcess, '/mvp2_test_robot/controller/process/set_point', 3)
         self.thruster_pub = self.create_publisher(Float64MultiArray, '/mvp2_test_robot/stonefish/thruster_command', 5)
 
                  #initial set point
@@ -68,7 +70,7 @@ class ActorROS(Node):
                                 output_dim = 4).to(self.device)
 
         # self.model.load_state_dict(torch.load("actor_transformer.pth"))
-        self.model.load_state_dict(torch.load("model/actor.pth"))
+        self.model.load_state_dict(torch.load("model1/actor.pth"))
 
         self.model.eval()
 
@@ -78,21 +80,17 @@ class ActorROS(Node):
         # self.action_buffer = collections.deque(maxlen=self.window_size)
         self.state_buffer = collections.deque(maxlen=self.window_size)
         self.error_state_buffer = collections.deque(maxlen=self.window_size)
-
+        self.enabled = False
         #setup timer
         self.timer_pub = self.create_timer(0.05, self.step)
-        self.timer_setpoint_update = self.create_timer(60, self.set_point_update)
-        self.timer_setpoint_pub = self.create_timer(1.0, self.set_point_publish)
+        # self.timer_setpoint_update = self.create_timer(60, self.set_point_update)
+        # self.timer_setpoint_pub = self.create_timer(1.0, self.set_point_publish)
 
-        self.set_controller = self.create_client(SetBool, '/mvp2_test_robot/controller/set')  
-        self.active_controller(True)
+        # self.set_controller = self.create_client(SetBool, '/mvp2_test_robot/controller/set')  
+        # self.active_controller(True)
         
-    def active_controller(self, req: bool):
-        set_controller = SetBool.Request()
-        set_controller.data = req
-        future = self.set_controller.call_async(set_controller)
-        # rclpy.spin_until_future_complete(self, future)
-        return future.result()
+    def controller_state_callback(self, msg):
+        self.enabled = msg.data
     
     def set_point_update(self):    
         #update setpoint
@@ -152,27 +150,28 @@ class ActorROS(Node):
         self.thrust_cmd[0] = list(msg.data)
 
     def step(self):
-        current_pose = torch.tensor(self.state, dtype=torch.float32).unsqueeze(0)
-        error_pose = torch.tensor(self.error_state, dtype=torch.float32).unsqueeze(0)
+        if self.enabled :
+            current_pose = torch.tensor(self.state, dtype=torch.float32).unsqueeze(0)
+            error_pose = torch.tensor(self.error_state, dtype=torch.float32).unsqueeze(0)
 
-        # Add current state and error to the buffers
-        self.state_buffer.append(current_pose)
-        self.error_state_buffer.append(error_pose)
-        
-        # Create a sequence of actions (the buffer) for transformer inference
-        # The buffer will contain the most recent states and errors
-        context_states = torch.cat(list(self.state_buffer), dim=0).unsqueeze(0).to(self.device)
-        context_errors = torch.cat(list(self.error_state_buffer), dim=0).unsqueeze(0).to(self.device)
-        
-        # Assuming the transformer model takes the sequence of past states and errors as input
-        with torch.no_grad():
-            pred_thrust_cmd = self.model(context_states, context_errors)
-            print(pred_thrust_cmd)
+            # Add current state and error to the buffers
+            self.state_buffer.append(current_pose)
+            self.error_state_buffer.append(error_pose)
             
-            # Convert predicted thrust commands to a message
-            msg = Float64MultiArray()
-            msg.data = pred_thrust_cmd.detach().cpu().numpy().flatten().tolist()
-            self.thruster_pub.publish(msg)
+            # Create a sequence of actions (the buffer) for transformer inference
+            # The buffer will contain the most recent states and errors
+            context_states = torch.cat(list(self.state_buffer), dim=0).unsqueeze(0).to(self.device)
+            context_errors = torch.cat(list(self.error_state_buffer), dim=0).unsqueeze(0).to(self.device)
+            
+            # Assuming the transformer model takes the sequence of past states and errors as input
+            with torch.no_grad():
+                pred_thrust_cmd = self.model(context_states, context_errors)
+                print(pred_thrust_cmd)
+                
+                # Convert predicted thrust commands to a message
+                msg = Float64MultiArray()
+                msg.data = pred_thrust_cmd.detach().cpu().numpy().flatten().tolist()
+                self.thruster_pub.publish(msg)
 
 def main(args=None):
 

@@ -112,7 +112,8 @@ class TD3Agent:
         state = state.squeeze(2)  # Remove the unnecessary dimension
         error = error.squeeze(2)  # Remove the unnecessary dimension
         action = action.squeeze(2)
-
+        # print(reward.shape)
+        # print(torch.min(reward).item()) 
         next_state = next_state.squeeze(2)  # Remove the unnecessary dimension
         next_error = next_error.squeeze(2)  # Remove the unnecessary dimension
 

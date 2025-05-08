@@ -78,7 +78,8 @@ class TD3_ROS(Node):
                                 hidden_dim = 32, num_layers = 2,
                                 action_dim = 4, device = self.device,
                                 actor_ckpt = 'actor_transformer.pth',
-                                actor_lr = 1e-7, critic_lr= 1e-3,  tau = 0.001, noise_std= 0.05, policy_delay=10,
+                                actor_lr = 1e-7, critic_lr= 1e-4,  tau = 0.001, noise_std= 0.05, policy_delay=10,
+                                # actor_lr = 1e-7, critic_lr= 1e-3,  tau = 0.001, noise_std= 0.05, policy_delay=10,
                                 seq_len = self.window_size)
 
         
@@ -192,7 +193,7 @@ class TD3_ROS(Node):
             else:
                 self.model.replay_buffer.add(self.prev_state, self.prev_error_state, self.prev_action.detach().cpu().numpy(), 
                                              reward, new_state, new_error_state, done)
-            
+                # print(reward)
             # print(new_state - self.prev_state)
             # print(new_error_state - self.prev_error_state)
             ##update the prev error and action
@@ -215,16 +216,40 @@ class TD3_ROS(Node):
         current_error = error_pose.view(-1,1)
 
         # Define a weight matrix W: shape [3, 3]
-        w_z = 0.5
+        w_z = 1.0
         w_pitch = 1
-        w_yaw = 0.6
-        w_u = 1.0
+        w_yaw = 0.5
+        w_u = 2.0
         # Creat diagonal weight matrix W
         W = torch.diag(torch.tensor([w_z, w_pitch, w_yaw, w_u]))
+        # W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32)
+        # error_reward_w = new_error *W
+        # error_reward = torch.norm(error_reward_w, p=2, dim=-1)
         # Compute quadratic form: error^T * W * error -> scalar tensor
         error_reward = torch.matmul(new_error.T, torch.matmul(W, new_error)).item()  # shape [1, 1]
 
-        reward = - 100*error_reward
+        w_d_z = 1.0
+        w_d_pitch = 1.0
+        w_d_yaw = 0.5
+        w_d_u = 2.0
+        weights = torch.tensor([w_d_z, w_d_pitch, w_d_yaw, w_d_u], dtype=torch.float32)
+
+
+        current_weighted = current_error * weights
+        new_weighted = new_error * weights
+        delta_pose = new_weighted - current_weighted
+        delta_reward =  torch.sum (delta_pose**2 )
+        # print(error_reward)
+        # print(delta_reward)
+        # print(f"error award: {error_reward}")
+        # print(f"delta award: {delta_reward}")
+        bonus = -100
+        if abs(new_error[0])<0.1 and abs(new_error[1])<0.08 and abs(new_error[2])<0.08 and abs(new_error[3])<0.01:
+            bonus = 0
+            # print("bonus")
+
+        reward = - 100*error_reward - 10*delta_reward + bonus
+        # print(f"reward: {reward}")
         return reward
 
 
