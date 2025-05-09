@@ -54,7 +54,7 @@ class TD3_ROS(Node):
         #     'pqr': (0,0,0)
         # }
         state = {
-             'z': (0),
+            #  'z': (0),
             'euler': (0,0), # Quaternion (x, y, z, w)
             'u': (0, 0),
             'pqr': (0)
@@ -70,15 +70,19 @@ class TD3_ROS(Node):
         self.prev_error_state = torch.zeros(len(self.error_state))
         self.prev_state = torch.zeros(len(self.state))
         self.window_size = 10
+        self.integral_error_size = 50
+
         self.state_buffer = collections.deque(maxlen=self.window_size)
         self.error_state_buffer = collections.deque(maxlen=self.window_size)
+        self.integral_error_buffer = collections.deque(maxlen=self.integral_error_size)
+
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = TD3Agent(state_dim = len(self.state), error_dim = len(self.error_state), 
-                                hidden_dim = 32, num_layers = 2,
+                                hidden_dim = 128, num_layers = 3,
                                 action_dim = 4, device = self.device,
                                 actor_ckpt = 'actor_transformer.pth',
-                                actor_lr = 1e-7, critic_lr= 1e-4,  tau = 0.001, noise_std= 0.05, policy_delay=10,
+                                actor_lr = 1e-7, critic_lr= 1e-4,  tau = 0.001, noise_std= 0.1, policy_delay=10,
                                 # actor_lr = 1e-7, critic_lr= 1e-3,  tau = 0.001, noise_std= 0.05, policy_delay=10,
                                 seq_len = self.window_size)
 
@@ -144,7 +148,7 @@ class TD3_ROS(Node):
         #     'pqr': {msg.angular_rate.x, msg.angular_rate.y, msg.angular_rate.z}
         # }
         state = {
-            'z': (msg.position.z),
+            # 'z': (msg.position.z),
             'euler': (msg.orientation.y, msg.orientation.z),  
             'u': (msg.velocity.x, msg.velocity.z),
             'pqr': (msg.angular_rate.z)
@@ -167,13 +171,10 @@ class TD3_ROS(Node):
             #new pose and error pose
             new_state = torch.tensor(self.state, dtype=torch.float32).unsqueeze(0)
             new_error_state = torch.tensor(self.error_state, dtype=torch.float32).unsqueeze(0)
-            if len(self.state_buffer) > 2:
-                # print(len(self.state_buffer))
-                # self.hist_error_state = torch.tensor(list(self.state_buffer), dtype=torch.float32)
-                self.buffer_tensor = torch.stack(list(self.error_state_buffer))
-                # print(buffer_tensor.shape)
+
             self.state_buffer.append(new_state)
             self.error_state_buffer.append(new_error_state)
+            self.integral_error_buffer.append(new_error_state)
             
             # Create a sequence of actions (the buffer) for transformer inference
             # The buffer will contain the most recent states and errors
@@ -197,7 +198,8 @@ class TD3_ROS(Node):
             else:
                 # only store the data when the temporal buffer is filled and the reward is valid
                 if len(self.state_buffer) == self.window_size:
-                    reward = self.calculate_reward(self.prev_error_state, new_error_state, self.buffer_tensor)
+                    
+                    reward = self.calculate_reward(self.prev_error_state, new_error_state, self.integral_error_buffer)
                     self.model.replay_buffer.add(self.prev_state, self.prev_error_state, self.prev_action.detach().cpu().numpy(), 
                                                 reward, new_state, new_error_state, done)
                 # print(reward)
@@ -230,18 +232,19 @@ class TD3_ROS(Node):
         w_yaw = 0.5
         w_u = 2.0
         # Creat diagonal weight matrix W
-        W = torch.diag(torch.tensor([w_z, w_pitch, w_yaw, w_u]))
-        # W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32)
-        # error_reward_w = new_error *W
-        # error_reward = torch.norm(error_reward_w, p=2, dim=-1)
-        # Compute quadratic form: error^T * W * error -> scalar tensor
-        error_reward = torch.matmul(new_error.T, torch.matmul(W, new_error)).item()  # shape [1, 1]
+        W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32)
+        error_reward = torch.sum(new_error * W )
+
+
+        w_z = 1.0
+        w_pitch = 1
+        w_yaw = 0.5
+        w_u = 2.0
 
         W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32)
         # print(W.shape)
-        # hist_reward =  histo_error * W
-        accum_squared_error = torch.sum((histo_error ** 2)*W)
-        # print(f"accum_squared_error: {accum_squared_error}")
+        histo_error =  torch.sum(histo_error, dim=0)
+        accum_error = torch.sum(histo_error * W )
 
         w_d_z = 1.0
         w_d_pitch = 1.0
@@ -254,18 +257,15 @@ class TD3_ROS(Node):
         new_weighted = new_error * weights
         delta_pose = new_weighted - current_weighted
         delta_reward =  torch.sum (delta_pose**2 )
-        # print(error_reward)
-        # print(delta_reward)
-        # print(f"error award: {error_reward}")
-        # print(f"delta award: {delta_reward}")
+ 
         bonus = -100
         if abs(new_error[0])<0.1 and abs(new_error[1])<0.08 and abs(new_error[2])<0.08 and abs(new_error[3])<0.01:
             bonus = 0
             # print("bonus")
 
         error_reward = 100*error_reward
-        delta_reward = 1000*delta_reward
-        accum_squared_error = 5*accum_squared_error
+        delta_reward = 0*delta_reward
+        accum_squared_error = 5*accum_error
         reward = -error_reward -delta_reward + bonus -accum_squared_error
         print(f"error_reward: {error_reward: .4f}",
               f"accum_squared_error: {accum_squared_error: .4f}",

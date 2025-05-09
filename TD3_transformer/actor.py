@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from position_encoder import PositionalEncoding
 
 # Define the Transformer model
 class ActorTransformer(nn.Module):
@@ -14,7 +15,8 @@ class ActorTransformer(nn.Module):
         # Input embeddings (for state and error)
         self.state_embedding = nn.Linear(state_dim, hidden_dim)
         self.error_embedding = nn.Linear(error_dim, hidden_dim)
-        
+        self.pos_encoder = PositionalEncoding(hidden_dim)
+
         # Transformer Encoder Layer
         self.encoder_layer = nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=num_heads, batch_first=True )
         self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=num_layers,)
@@ -29,10 +31,8 @@ class ActorTransformer(nn.Module):
 
         # Concatenate the state and error embeddings (if needed for your task)
         x = state_emb + error_emb  # you could use torch.cat(state_emb, error_emb, dim=-1) instead if required
-        # print(x.shape)
-        # Add a batch dimension (transformer expects (seq_len, batch_size, feature_dim))
-        # x = x.unsqueeze(0)  # Adding batch dimension at the beginning
-        
+        x = self.pos_encoder(x)  # Add positional encoding
+    
         # Pass through the transformer encoder
         x = self.transformer_encoder(x)
         # Get the output (from the first token for simplicity)
