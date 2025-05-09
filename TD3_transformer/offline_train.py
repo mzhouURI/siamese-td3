@@ -26,7 +26,7 @@ data = np.loadtxt('offline_data/filename1.csv', delimiter=',')
 #19:24 u,v,w,p,q,r
 error_states = data[:, [3,5,6,7]]
 # states = data[:, 15:25]
-states = data[:, [15, 17, 18, 19, 21, 24]] 
+states = data[:, [ 17, 18, 19, 21, 24]] 
 actions = data[:, -4:]
 error_dim = error_states.shape[1]
 state_dim = states.shape[1]
@@ -42,11 +42,11 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
 model = ActorTransformer(state_dim = state_dim, error_dim = error_dim, 
-                         hidden_dim = 32, num_layers = 2,
+                         hidden_dim = 128, num_layers = 3,
                          output_dim = action_dim).to(device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-loss_fn = nn.MSELoss(reduction = 'sum')
+loss_fn = nn.MSELoss(reduction = 'mean')
 # Assuming error_states, states, and actions are already extracted from `data`
 training_data = np.hstack((error_states, states, actions))
 

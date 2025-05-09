@@ -195,6 +195,7 @@ class TD3_ROS(Node):
                 print("skip this step")
                 self.state_buffer.clear()
                 self.error_state_buffer.clear()
+                self.integral_error_buffer.clear()
             else:
                 # only store the data when the temporal buffer is filled and the reward is valid
                 if len(self.state_buffer) == self.window_size:
@@ -202,14 +203,9 @@ class TD3_ROS(Node):
                     reward = self.calculate_reward(self.prev_error_state, new_error_state, self.integral_error_buffer)
                     self.model.replay_buffer.add(self.prev_state, self.prev_error_state, self.prev_action.detach().cpu().numpy(), 
                                                 reward, new_state, new_error_state, done)
-                # print(reward)
-            # print(new_state - self.prev_state)
-            # print(new_error_state - self.prev_error_state)
-            ##update the prev error and action
             self.prev_error_state = new_error_state
             self.prev_state = new_state
             self.prev_action = action
-
             
             if len(self.model.replay_buffer.buffer) > self.batch_warmup_size:  # Start training after enough experiences
                 c1_loss, c2_loss, actor_loss = self.model.train(batch_size=self.batch_size, sequence_len = self.window_size)
@@ -243,7 +239,7 @@ class TD3_ROS(Node):
 
         W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32)
         # print(W.shape)
-        histo_error =  torch.sum(histo_error, dim=0)
+        histo_error =  torch.sum(histo_error, dim=0)/len(histo_error)
         accum_error = torch.sum(histo_error * W )
 
         w_d_z = 1.0
