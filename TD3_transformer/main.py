@@ -69,7 +69,7 @@ class TD3_ROS(Node):
         self.prev_action = torch.zeros(4)
         self.prev_error_state = torch.zeros(len(self.error_state))
         self.prev_state = torch.zeros(len(self.state))
-        self.window_size = 10
+        self.window_size = 20
         self.integral_error_size = 50
 
         self.state_buffer = collections.deque(maxlen=self.window_size)
@@ -89,7 +89,7 @@ class TD3_ROS(Node):
         
         self.total_reward = 0
 
-        self.timer_setpoint_update = self.create_timer(10, self.set_point_update)
+        self.timer_setpoint_update = self.create_timer(100, self.set_point_update)
         self.timer_setpoint_pub = self.create_timer(1.0, self.set_point_publish)
         self.timer_pub = self.create_timer(0.1, self.step)
 
@@ -180,7 +180,7 @@ class TD3_ROS(Node):
             # The buffer will contain the most recent states and errors
             context_states = torch.cat(list(self.state_buffer), dim=0).unsqueeze(0).to(self.device)
             context_errors = torch.cat(list(self.error_state_buffer), dim=0).unsqueeze(0).to(self.device)
-
+            
             #action for the next round
             action = self.model.select_action(context_states, context_errors)
             msg = Float64MultiArray()
@@ -199,10 +199,13 @@ class TD3_ROS(Node):
             else:
                 # only store the data when the temporal buffer is filled and the reward is valid
                 if len(self.state_buffer) == self.window_size:
-                    
-                    reward = self.calculate_reward(self.prev_error_state, new_error_state, self.integral_error_buffer)
+                    # Convert the deque to a PyTorch tensor
+                    buffer_tensor = torch.stack(list(self.integral_error_buffer))
+                    reward = self.calculate_reward(self.prev_error_state, new_error_state, buffer_tensor)
                     self.model.replay_buffer.add(self.prev_state, self.prev_error_state, self.prev_action.detach().cpu().numpy(), 
+                    # self.model.replay_buffer.add(self.prev_state, self.prev_error_state, self.prev_action,
                                                 reward, new_state, new_error_state, done)
+                    
             self.prev_error_state = new_error_state
             self.prev_state = new_state
             self.prev_action = action
@@ -220,7 +223,6 @@ class TD3_ROS(Node):
         new_error = new_error_pose.view(-1, 1)
         current_error = error_pose.view(-1,1)
         histo_error = histo_error.squeeze(1)
-        # print(histo_error.shape)
 
         # Define a weight matrix W: shape [3, 3]
         w_z = 1.0
@@ -229,18 +231,17 @@ class TD3_ROS(Node):
         w_u = 2.0
         # Creat diagonal weight matrix W
         W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32)
-        error_reward = torch.sum(new_error * W )
-
+        error_reward = torch.sum(abs(new_error) * W )
 
         w_z = 1.0
         w_pitch = 1
         w_yaw = 0.5
         w_u = 2.0
 
-        W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32)
+        W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32, device = histo_error.device)
         # print(W.shape)
         histo_error =  torch.sum(histo_error, dim=0)/len(histo_error)
-        accum_error = torch.sum(histo_error * W )
+        accum_error = torch.sum(abs(histo_error) * W )
 
         w_d_z = 1.0
         w_d_pitch = 1.0
@@ -259,12 +260,12 @@ class TD3_ROS(Node):
             bonus = 0
             # print("bonus")
 
-        error_reward = 100*error_reward
+        error_reward = 10*error_reward
         delta_reward = 0*delta_reward
-        accum_squared_error = 5*accum_error
-        reward = -error_reward -delta_reward + bonus -accum_squared_error
+        accum_error = 5*accum_error
+        reward = -error_reward -delta_reward + bonus
         print(f"error_reward: {error_reward: .4f}",
-              f"accum_squared_error: {accum_squared_error: .4f}",
+              f"accum_squared_error: {accum_error: .4f}",
               f"delta_reward: {delta_reward: .4f}",
               f"bonus: {bonus: .4f}")
 

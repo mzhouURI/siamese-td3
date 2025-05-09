@@ -34,7 +34,6 @@ class ReplayBuffer:
             lambda x: torch.FloatTensor(np.stack(x)),
             zip(*[zip(*seq) for seq in sequences])  # Transpose list of sequences
         )
-
         return s, g, a, r, s2, g2, d
 
     
