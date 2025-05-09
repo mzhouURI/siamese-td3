@@ -21,7 +21,7 @@ class CriticTransformer(nn.Module):
         self.input_proj = nn.Linear(self.state_dim + error_dim + action_dim, hidden_dim)
         
         # Transformer Encoder Layer
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=num_heads, batch_first=True )
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=num_heads, batch_first=True, norm_first = True)
         self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=num_layers)
         
         # Output layer for Q-value

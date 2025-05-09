@@ -47,18 +47,18 @@ class TD3_ROS(Node):
         self.batch_size = 64
         self.batch_warmup_size =self.batch_size*1
         self.set_point_update_flag = False
-        # state = {
-        #     'z': (0),
-        #     'euler': (0,0,0), # Quaternion (x, y, z, w)
-        #     'uvw': (0,0,0),
-        #     'pqr': (0,0,0)
-        # }
         state = {
-            #  'z': (0),
-            'euler': (0,0), # Quaternion (x, y, z, w)
-            'u': (0, 0),
-            'pqr': (0)
+            # 'z': (0),
+            'euler': (0,0,0), # Quaternion (x, y, z, w)
+            'uvw': (0,0,0),
+            'pqr': (0,0,0),
         }
+        # state = {
+        #     #  'z': (0),
+        #     'euler': (0,0), # Quaternion (x, y, z, w)
+        #     'u': (0, 0),
+        #     'pqr': (0)
+        # }
         error_state = {
              'z': (0),
             'euler': (0,0), # Quaternion (x, y, z, w)
@@ -70,7 +70,7 @@ class TD3_ROS(Node):
         self.prev_error_state = torch.zeros(len(self.error_state))
         self.prev_state = torch.zeros(len(self.state))
         self.window_size = 20
-        self.integral_error_size = 50
+        self.integral_error_size = 1000
 
         self.state_buffer = collections.deque(maxlen=self.window_size)
         self.error_state_buffer = collections.deque(maxlen=self.window_size)
@@ -82,7 +82,7 @@ class TD3_ROS(Node):
                                 hidden_dim = 128, num_layers = 3,
                                 action_dim = 4, device = self.device,
                                 actor_ckpt = 'actor_transformer.pth',
-                                actor_lr = 1e-7, critic_lr= 1e-3,  tau = 0.001, noise_std= 0.1, policy_delay=10,
+                                actor_lr = 1e-7, critic_lr= 1e-3,  tau = 0.002, noise_std= 0.1, policy_delay=10,
                                 # actor_lr = 1e-7, critic_lr= 1e-3,  tau = 0.001, noise_std= 0.05, policy_delay=10,
                                 seq_len = self.window_size)
 
@@ -141,18 +141,18 @@ class TD3_ROS(Node):
 
     def state_callback(self, msg):
 
-        # state = {
-        #     'z': (msg.position.z),
-        #     'euler': (msg.orientation.x, msg.orientation.y, msg.orientation.z), 
-        #     'uvw': (msg.velocity.x, msg.velocity.y, msg.velocity.z),
-        #     'pqr': {msg.angular_rate.x, msg.angular_rate.y, msg.angular_rate.z}
-        # }
         state = {
             # 'z': (msg.position.z),
-            'euler': (msg.orientation.y, msg.orientation.z),  
-            'u': (msg.velocity.x, msg.velocity.z),
-            'pqr': (msg.angular_rate.z)
+            'euler': (msg.orientation.x, msg.orientation.y, msg.orientation.z), 
+            'uvw': (msg.velocity.x, msg.velocity.y, msg.velocity.z),
+            'pqr': {msg.angular_rate.x, msg.angular_rate.y, msg.angular_rate.z}
         }
+        # state = {
+        #     # 'z': (msg.position.z),
+        #     'euler': (msg.orientation.y, msg.orientation.z),  
+        #     'u': (msg.velocity.x, msg.velocity.z),
+        #     'pqr': (msg.angular_rate.z)
+        # }
         self.state = self.flatten_state(state)
 
     def state_error_callback(self, msg):
@@ -180,7 +180,6 @@ class TD3_ROS(Node):
             # The buffer will contain the most recent states and errors
             context_states = torch.cat(list(self.state_buffer), dim=0).unsqueeze(0).to(self.device)
             context_errors = torch.cat(list(self.error_state_buffer), dim=0).unsqueeze(0).to(self.device)
-            
             #action for the next round
             action = self.model.select_action(context_states, context_errors)
             msg = Float64MultiArray()
@@ -203,7 +202,6 @@ class TD3_ROS(Node):
                     buffer_tensor = torch.stack(list(self.integral_error_buffer))
                     reward = self.calculate_reward(self.prev_error_state, new_error_state, buffer_tensor)
                     self.model.replay_buffer.add(self.prev_state, self.prev_error_state, self.prev_action.detach().cpu().numpy(), 
-                    # self.model.replay_buffer.add(self.prev_state, self.prev_error_state, self.prev_action,
                                                 reward, new_state, new_error_state, done)
                     
             self.prev_error_state = new_error_state
@@ -225,48 +223,49 @@ class TD3_ROS(Node):
         histo_error = histo_error.squeeze(1)
 
         # Define a weight matrix W: shape [3, 3]
-        w_z = 5.0
-        w_pitch = 1
-        w_yaw = 2.0
-        w_u = 5.0
+        w_z = 0.25
+        w_pitch = 0.25
+        w_yaw = 0.25
+        w_u = 0.25
+        
         # Creat diagonal weight matrix W
         W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32)
         error_reward = torch.sum(abs(new_error) * W )
 
-        w_z = 5.0
-        w_pitch = 1
-        w_yaw = 2.0
-        w_u = 5.0
+        w_z = 0.25
+        w_pitch = 0.25
+        w_yaw = 0.25
+        w_u = 0.25
 
         W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32, device = histo_error.device)
         # sum all the error and calcualte the mean
-        histo_error =  torch.sum(histo_error, dim=0)/len(histo_error)
-        print(histo_error)
+        histo_error =  torch.sum(histo_error, dim=0)
+        # print(histo_error)
         accum_error = torch.sum(abs(histo_error) * W )
 
-        w_d_z = 1.0
-        w_d_pitch = 1.0
-        w_d_yaw = 0.5
-        w_d_u = 2.0
+        w_d_z = 0.25
+        w_d_pitch = 0.25
+        w_d_yaw = 0.25
+        w_d_u = 0.25
         weights = torch.tensor([w_d_z, w_d_pitch, w_d_yaw, w_d_u], dtype=torch.float32)
 
 
         current_weighted = current_error * weights
         new_weighted = new_error * weights
-        delta_pose = new_weighted - current_weighted
-        delta_reward =  torch.sum (delta_pose**2 )
+        delta_pose = abs(new_weighted) - abs(current_weighted)
+        delta_reward =  torch.sum (delta_pose )
  
-        bonus = -100
+        bonus = -1000
         if abs(new_error[0])<0.1 and abs(new_error[1])<0.05 and abs(new_error[2])<0.05 and abs(new_error[3])<0.01:
             bonus = 0
             # print("bonus")
 
-        error_reward = 10*error_reward
-        delta_reward = 0*delta_reward
-        accum_error = 5*accum_error
-        reward = -error_reward -delta_reward + bonus
+        error_reward = -100*error_reward
+        delta_reward = -10000*delta_reward
+        accum_error = -1*accum_error
+        reward = error_reward +delta_reward + accum_error + bonus
         print(f"error_reward: {error_reward: .4f}",
-              f"accum_squared_error: {accum_error: .4f}",
+              f"accum_error: {accum_error: .4f}",
               f"delta_reward: {delta_reward: .4f}",
               f"bonus: {bonus: .4f}")
 
