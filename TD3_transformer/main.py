@@ -82,7 +82,7 @@ class TD3_ROS(Node):
                                 hidden_dim = 128, num_layers = 3,
                                 action_dim = 4, device = self.device,
                                 actor_ckpt = 'actor_transformer.pth',
-                                actor_lr = 1e-7, critic_lr= 1e-4,  tau = 0.001, noise_std= 0.1, policy_delay=10,
+                                actor_lr = 1e-7, critic_lr= 1e-3,  tau = 0.001, noise_std= 0.1, policy_delay=10,
                                 # actor_lr = 1e-7, critic_lr= 1e-3,  tau = 0.001, noise_std= 0.05, policy_delay=10,
                                 seq_len = self.window_size)
 
@@ -225,22 +225,23 @@ class TD3_ROS(Node):
         histo_error = histo_error.squeeze(1)
 
         # Define a weight matrix W: shape [3, 3]
-        w_z = 1.0
+        w_z = 5.0
         w_pitch = 1
-        w_yaw = 0.5
-        w_u = 2.0
+        w_yaw = 2.0
+        w_u = 5.0
         # Creat diagonal weight matrix W
         W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32)
         error_reward = torch.sum(abs(new_error) * W )
 
-        w_z = 1.0
+        w_z = 5.0
         w_pitch = 1
-        w_yaw = 0.5
-        w_u = 2.0
+        w_yaw = 2.0
+        w_u = 5.0
 
         W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32, device = histo_error.device)
-        # print(W.shape)
+        # sum all the error and calcualte the mean
         histo_error =  torch.sum(histo_error, dim=0)/len(histo_error)
+        print(histo_error)
         accum_error = torch.sum(abs(histo_error) * W )
 
         w_d_z = 1.0
@@ -256,7 +257,7 @@ class TD3_ROS(Node):
         delta_reward =  torch.sum (delta_pose**2 )
  
         bonus = -100
-        if abs(new_error[0])<0.1 and abs(new_error[1])<0.08 and abs(new_error[2])<0.08 and abs(new_error[3])<0.01:
+        if abs(new_error[0])<0.1 and abs(new_error[1])<0.05 and abs(new_error[2])<0.05 and abs(new_error[3])<0.01:
             bonus = 0
             # print("bonus")
 
