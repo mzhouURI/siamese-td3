@@ -78,7 +78,7 @@ class SAC_RNN_ROS(Node):
 
         self.timer_setpoint_update = self.create_timer(30, self.set_point_update)
         self.timer_setpoint_pub = self.create_timer(1.0, self.set_point_publish)
-        self.timer_pub = self.create_timer(0.2, self.step)
+        self.timer_pub = self.create_timer(0.1, self.step)
 
         self.set_controller = self.create_client(SetBool, '/mvp2_test_robot/controller/set')  
         self.active_controller(True)
@@ -181,10 +181,8 @@ class SAC_RNN_ROS(Node):
         obs_seq = obs_seq.unsqueeze(0)
         obs_seq = obs_seq.to(self.device)
         
-        action, _, _ = self.model.actor(obs_seq, None)
+        action = self.model.select_action(obs_seq, hidden)
         action = action[:, -1, :]  # Shape: (batch_size, state_dim)
-
-        # action = torch.tensor(action, dtype=torch.float32).unsqueeze(0)
         action = action.detach().squeeze()
         # print(action.shape)
         self.rnn_action_buffer.append(action)
@@ -206,10 +204,9 @@ class SAC_RNN_ROS(Node):
 
         #do training if there are enough data in the replay buffer
         if len(self.model.replay_buffer.buffer) > self.batch_warmup_size:  # Start training after enough experiences
-            c1_loss, c2_loss, actor_loss, alpha_loss, alpha = self.model.update(batch_size=self.batch_size)
+            c1_loss, c2_loss, actor_loss = self.model.update(batch_size=self.batch_size)
             msg = Float64MultiArray()
-            msg.data = [float(c1_loss), float(c2_loss), float(actor_loss),
-                        float(alpha_loss), float(alpha)]
+            msg.data = [float(c1_loss), float(c2_loss), float(actor_loss)]
             self.loss_pub.publish(msg)
 
         

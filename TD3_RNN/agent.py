@@ -48,11 +48,17 @@ class TD3Agent:
 
 
 
-    def select_action(self, state, error, noise=True):
+    def select_action(self, obs_seq, noise=True):
         # Select action using the actor network (add exploration noise)
-        state = state.to(self.device).float()
-        action = self.actor(state)
+        # obs_seq = obs_seq.to(self.device).float()
+        # B, T, _ = obs_seq.shape
 
+        # ha = self.actor.init_hidden(B)
+
+        action,_ = self.actor(obs_seq, None)
+        # action = action[:, -1, :]  # Shape: (batch_size, state_dim)
+        # action = action.detach().squeeze()
+        # print(action.shape)
         if noise:
             noise_tensor = torch.normal(
                 mean=0.0,
@@ -84,7 +90,7 @@ class TD3Agent:
         ha = self.actor.init_hidden(B)
 
         with torch.no_grad():
-            next_action, next_log_prob, _ = self.actor(next_obs_seq, ha)
+            next_action, _ = self.actor(next_obs_seq, ha)
             noise = torch.normal(0, self.noise_std, size=next_action.shape).to(self.device)
             noise = noise.clamp(-0.5, 0.5)
             next_action = (next_action + noise).clamp(-self.max_action, self.max_action)
@@ -118,8 +124,10 @@ class TD3Agent:
 
         if self.total_it % self.policy_delay == 0:
                 # Actor loss (maximize Q from critic1)
-                actor_action = self.actor(obs_seq)
-                actor_loss = -self.critic1(obs_seq, actor_action).mean()
+                # print(obs_seq.shape)
+                actor_action,_ = self.actor(obs_seq, None)
+                actor_loss,_ = self.critic1(obs_seq, actor_action)
+                actor_loss = - actor_loss.mean()
 
                 self.actor_optimizer.zero_grad()
                 actor_loss.backward()

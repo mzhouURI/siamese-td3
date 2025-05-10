@@ -59,9 +59,9 @@ training_data = np.hstack((states, actions))
 # exit()
 # print(training_data[1,:])
 ep_loss = []
-seq_len = 10       # sequence length for transformer
+seq_len = 20       # sequence length for transformer
 batch_size = 64    # number of sequences per batch
-num_epochs = 100    # how many passes over the dataset
+num_epochs = 40    # how many passes over the dataset
 
 
 
