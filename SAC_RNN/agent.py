@@ -9,37 +9,6 @@ import random
 import numpy as np
 from collections import deque
 
-class ReplayBuffer:
-    def __init__(self, capacity, sequence_length=10):
-        self.capacity = capacity
-        self.buffer = []
-        self.idx = 0
-        self.sequence_length = sequence_length
-
-    def add(self, state, action, reward, next_state, done):
-        if len(self.buffer) < self.capacity:
-            self.buffer.append(None)
-        self.buffer[self.idx] = (state, action, reward, next_state, done)
-        self.idx = (self.idx + 1) % self.capacity
-
-    def sample_sequence(self, batch_size):
-        # Sample a sequence of transitions from the buffer
-        batch = []
-        for _ in range(batch_size):
-            start_idx = random.randint(0, len(self.buffer) - self.sequence_length)
-            sequence = self.buffer[start_idx:start_idx + self.sequence_length]
-            batch.append(sequence)
-        
-        # Unzip the batch into individual arrays
-        states, actions, rewards, next_states, dones = zip(*[
-            [(s, a, r, ns, d) for (s, a, r, ns, d) in sequence] for sequence in batch
-        ])
-
-        return np.array(states), np.array(actions), np.array(rewards), np.array(next_states), np.array(dones)
-
-    def size(self):
-        return len(self.buffer)
-
 class SACAgent:
     def __init__(self,
         obs_dim, action_dim, hidden_size=256, rnn_layer = 1, seq_len = 10,
@@ -50,18 +19,16 @@ class SACAgent:
         self.tau = tau
         self.device = device
 
-        self.actor = RNNActor(obs_dim, action_dim, hidden_size, rnn_layer)
+        self.actor = RNNActor(obs_dim, action_dim, hidden_size, rnn_layer).to(device)
 
         if actor_ckpt is not None:
             self.actor.load_state_dict(torch.load(actor_ckpt, map_location=device))
             print(f"Loaded actor weights from {actor_ckpt}")
 
-        self.critic1 = RNNCritic(obs_dim, action_dim, hidden_size, rnn_layer)
-        self.critic2 = RNNCritic(obs_dim, action_dim, hidden_size, rnn_layer)
-        self.target_critic1 = RNNCritic(obs_dim, action_dim, hidden_size)
-        self.target_critic2 = RNNCritic(obs_dim, action_dim, hidden_size)
-        self.target_critic1.load_state_dict(self.critic1.state_dict())
-        self.target_critic2.load_state_dict(self.critic2.state_dict())
+        self.critic1 = RNNCritic(obs_dim, action_dim, hidden_size, rnn_layer).to(device)
+        self.critic2 = RNNCritic(obs_dim, action_dim, hidden_size, rnn_layer).to(device)
+        self.target_critic1 = copy.deepcopy(self.critic1)
+        self.target_critic2 = copy.deepcopy(self.critic2)
 
         #replay buffer
         self.replay_buffer = RNNReplayBuffer(1000000, seq_len, obs_dim, action_dim, device)
@@ -158,3 +125,20 @@ class SACAgent:
     def _soft_update(self, source, target, tau):
         for src_param, tgt_param in zip(source.parameters(), target.parameters()):
             tgt_param.data.copy_(tau * src_param.data + (1 - tau) * tgt_param.data)
+
+    def save_model(self):
+        """
+        Save the actor and critic models to disk.
+        """
+        # Save the actor model
+        torch.save(self.actor.state_dict(), "model/actor.pth")
+
+        # Save the critic models
+        torch.save(self.critic1.state_dict(), "model/critic1.pth")
+        torch.save(self.critic2.state_dict(), "model/critic2.pth")
+
+        # Optionally, save the target models as well
+        torch.save(self.target_critic1.state_dict(), "model/critic1_target.pth")
+        torch.save(self.target_critic2.state_dict(), "model/critic2_target.pth")
+
+

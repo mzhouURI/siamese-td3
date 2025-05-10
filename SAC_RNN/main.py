@@ -68,9 +68,9 @@ class SAC_RNN_ROS(Node):
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = SACAgent(obs_dim = len(self.state) + len(self.error_state), action_dim = 4,
-                                seq_len = self.window_size, batch_size = self.batch_size,
+                                seq_len = self.window_size,
                                 device = self.device,
-                                hidden_dim = 128, num_layers = 2,
+                                hidden_size = 128, rnn_layer = 2,
                                 actor_ckpt = 'actor_rnn.pth',
                                 actor_lr = 1e-7, critic_lr= 1e-3,  tau = 0.002
                                 )
@@ -166,26 +166,41 @@ class SAC_RNN_ROS(Node):
 
         #calculate reward from previous action
         reward = self.calculate_reward(new_error_state)
-        reward = torch.tensor(reward, dtype=torch.float32).unsqueeze(0)
+        reward = reward.detach().float().unsqueeze(0)
+
         self.rnn_reward_buffer.append(reward)
 
         #take new action                
         #store the old action seq first
         rnn_prev_actions = self.rnn_action_buffer
         #take new action
-        action, _ = self.model.actor(self.rnn_new_obs_buffer)
-        action = torch.tensor(action, dtype=torch.float32).unsqueeze(0)  
-        self.rnn_action_buffer.append(action)
 
-        msg = Float64MultiArray()
-        msg.data = action.detach().cpu().numpy().flatten().tolist()                   
-        self.thruster_pub.publish(msg)
-        self.total_reward  = self.total_reward + reward
 
         # add to buffer when the rnn sequence buffer is filled
         if(len(self.rnn_new_obs_buffer)==self.window_size):         
             self.model.replay_buffer.add(rnn_prev_obs, rnn_prev_actions, 
                                             self.rnn_reward_buffer, self.rnn_new_obs_buffer)
+            
+            hidden = self.model.actor.init_hidden(self.batch_size)
+            obs_seq = torch.stack(list(self.rnn_new_obs_buffer), dim=0)
+
+            # Add batch dimension: shape (1, T, obs_dim)
+            obs_seq = obs_seq.unsqueeze(0)
+            obs_seq = obs_seq.to(self.device)
+            
+            action, _, _ = self.model.actor(obs_seq, None)
+            action = action[:, -1, :]  # Shape: (batch_size, state_dim)
+
+            # action = torch.tensor(action, dtype=torch.float32).unsqueeze(0)
+            action = action.detach().unsqueeze(0)  
+            self.rnn_action_buffer.append(action)
+            #publish action
+            msg = Float64MultiArray()
+            msg.data = action.detach().cpu().numpy().flatten().tolist()                   
+            self.thruster_pub.publish(msg)
+            self.total_reward  = self.total_reward + reward
+
+        
 
         #do training if there are enough data in the replay buffer
         if len(self.model.replay_buffer.buffer) > self.batch_warmup_size:  # Start training after enough experiences
@@ -194,6 +209,8 @@ class SAC_RNN_ROS(Node):
             msg.data = [float(c1_loss), float(c2_loss), float(actor_loss),
                         float(alpha_loss), float(alpha)]
             self.loss_pub.publish(msg)
+
+        
         # except Exception as e:
         #     self.get_logger().error(f"Error in step(): {e}")
 

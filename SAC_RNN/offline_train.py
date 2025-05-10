@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from actor import RNNActor
+from networks import RNNActor
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
@@ -44,7 +44,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
 model = RNNActor(obs_dim = state_dim, action_dim = action_dim,
-                 hidden_dim = 128, num_layers = 2,
+                 hidden_size = 128, rnn_layers = 2,
                  ).to(device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, amsgrad = True)
@@ -59,7 +59,7 @@ training_data = np.hstack((states, actions))
 # exit()
 # print(training_data[1,:])
 ep_loss = []
-seq_len = 20       # sequence length for transformer
+seq_len = 10       # sequence length for transformer
 batch_size = 64    # number of sequences per batch
 num_epochs = 100    # how many passes over the dataset
 
@@ -84,9 +84,12 @@ for epoch in range(num_epochs):
 
         # print(error_seq.shape)
         # print(state_seq.shape)
-        current_time_seconds = time.time()
-        rnn_action = model.forward(states_seq, deterministic =True)  # Your model takes (state, error) as inputs
-        # print(rnn_action)
+        rnn_action, hidden, _ = model.forward(states_seq, hidden =None)  # Your model takes (state, error) as inputs
+        rnn_action = rnn_action[:, -1, :]  # Shape: (batch_size, state_dim)
+
+        
+        # print(states_seq.shape)
+
         # exit()
         loss = loss_fn(rnn_action, actual_action)
         # print(loss)
@@ -95,6 +98,10 @@ for epoch in range(num_epochs):
         optimizer.step()
 
         total_loss += loss.item()
+
+    print(rnn_action[-1,:].detach().cpu().numpy())
+    print(actual_action[-1,:].cpu().numpy())
+
     ep_loss.append(total_loss)
 
     print(f"Epoch {epoch+1}/{num_epochs}, Loss: {total_loss:.4f}")
