@@ -84,10 +84,13 @@ for epoch in range(num_epochs):
 
         # print(error_seq.shape)
         # print(state_seq.shape)
-        rnn_action, hidden, _ = model.forward(states_seq, hidden =None)  # Your model takes (state, error) as inputs
-        rnn_action = rnn_action[:, -1, :]  # Shape: (batch_size, state_dim)
+        rnn_action, hidden= model.forward(states_seq, hidden =None)  # Your model takes (state, error) as inputs
 
-        
+        rnn_action = rnn_action[:, -1, :]  # Shape: (batch_size, state_dim)
+        # print(rnn_action)
+        # print(actual_action)
+
+        # exit()
         # print(states_seq.shape)
 
         # exit()

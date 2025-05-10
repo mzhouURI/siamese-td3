@@ -9,21 +9,29 @@ import random
 import numpy as np
 from collections import deque
 
-class SACAgent:
+class TD3Agent:
     def __init__(self,
         obs_dim, action_dim, hidden_size=256, rnn_layer = 1, seq_len = 10,
-        actor_ckpt = None, actor_lr=3e-4, critic_lr=3e-4, alpha_lr=3e-4,
-        tau=0.005, gamma=0.99, target_entropy=None, device='cpu'):
+        actor_ckpt = None, actor_lr=3e-4, critic_lr=3e-4,
+        tau=0.005, gamma=0.99, noise_std = 0.2, policy_delay =2,
+        device='cpu',max_action = 1):
 
-        self.gamma = gamma
+        # Hyperparameters
         self.tau = tau
+        self.gamma = gamma
+        self.noise_std = noise_std
+        self.policy_delay = policy_delay
+        self.total_timesteps = 0
+        self.max_action = max_action
         self.device = device
+        self.total_it = 0
 
         self.actor = RNNActor(obs_dim, action_dim, hidden_size, rnn_layer).to(device)
 
         if actor_ckpt is not None:
             self.actor.load_state_dict(torch.load(actor_ckpt, map_location=device))
             print(f"Loaded actor weights from {actor_ckpt}")
+        self.target_actor = copy.deepcopy(self.actor)
 
         self.critic1 = RNNCritic(obs_dim, action_dim, hidden_size, rnn_layer).to(device)
         self.critic2 = RNNCritic(obs_dim, action_dim, hidden_size, rnn_layer).to(device)
@@ -38,24 +46,25 @@ class SACAgent:
         self.critic1_optimizer = torch.optim.Adam(self.critic1.parameters(), lr=critic_lr)
         self.critic2_optimizer = torch.optim.Adam(self.critic2.parameters(), lr=critic_lr)
 
-        # Entropy temperature
-        self.log_alpha = torch.tensor(np.log(0.1), requires_grad=True, device=device)
-        self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=alpha_lr)
-        self.target_entropy = -action_dim if target_entropy is None else target_entropy
 
-        self.alpha = self.log_alpha.exp().detach()
 
-        # Sync targets
-        self._soft_update(self.critic1, self.target_critic1, tau=1.0)
-        self._soft_update(self.critic2, self.target_critic2, tau=1.0)
+    def select_action(self, state, error, noise=True):
+        # Select action using the actor network (add exploration noise)
+        state = state.to(self.device).float()
+        action = self.actor(state)
 
-    def select_action(self, obs_seq, hidden_state=None, deterministic=False):
-        self.actor.eval()
-        with torch.no_grad():
-            obs_seq = obs_seq.to(self.device).unsqueeze(0)  # Add batch dim
-            action, _, _ = self.actor(obs_seq, hidden_state, deterministic)
-        self.actor.train()
-        return action.squeeze(0).cpu().numpy()
+        if noise:
+            noise_tensor = torch.normal(
+                mean=0.0,
+                std=self.noise_std,
+                size=action.shape,
+                device=action.device
+            )
+            action += noise_tensor
+
+        # Clip actions to valid range
+        action = torch.clamp(action, -self.max_action, self.max_action)
+        return action
 
     def update(self, batch_size):
         obs_seq, action_seq, reward_seq, next_obs_seq, _ = self.replay_buffer.sample(batch_size)
@@ -75,18 +84,25 @@ class SACAgent:
         ha = self.actor.init_hidden(B)
 
         with torch.no_grad():
-            next_action, _, next_log_prob = self.actor(next_obs_seq, ha)
+            next_action, next_log_prob, _ = self.actor(next_obs_seq, ha)
+            noise = torch.normal(0, self.noise_std, size=next_action.shape).to(self.device)
+            noise = noise.clamp(-0.5, 0.5)
+            next_action = (next_action + noise).clamp(-self.max_action, self.max_action)
+
             target_q1, _ = self.target_critic1(next_obs_seq, next_action, th1)
             target_q2, _ = self.target_critic2(next_obs_seq, next_action, th2)
-            target_q = torch.min(target_q1, target_q2) - self.alpha * next_log_prob
-            target_value = reward_seq + self.gamma * target_q
+
+            # target_q1 = target_q1[:, -1, :]  # Shape: (batch_size, state_dim)
+            # target_q2 = target_q2[:, -1, :]  # Shape: (batch_size, state_dim)
+            target_q = reward_seq + self.gamma * torch.min(target_q1, target_q2)
 
         # Critic losses
+
         q1_pred, _ = self.critic1(obs_seq, action_seq, h1)
         q2_pred, _ = self.critic2(obs_seq, action_seq, h2)
 
-        critic1_loss = F.mse_loss(q1_pred, target_value)
-        critic2_loss = F.mse_loss(q2_pred, target_value)
+        critic1_loss = F.mse_loss(q1_pred, target_q)
+        critic2_loss = F.mse_loss(q2_pred, target_q)
 
         self.critic1_optimizer.zero_grad()
         critic1_loss.backward()
@@ -96,35 +112,31 @@ class SACAgent:
         critic2_loss.backward()
         self.critic2_optimizer.step()
 
-        # Actor loss
-        new_action, _, log_prob = self.actor(obs_seq, ha, return_log_prob=True)
-        q1_pi, _ = self.critic1(obs_seq, new_action, h1)
-        q2_pi, _ = self.critic2(obs_seq, new_action, h2)
-        q_pi = torch.min(q1_pi, q2_pi)
+        # Actor loss: minimize the negative Q-value (maximize Q-value)
+        actor_loss = torch.tensor(0.0)  # Default value if not updated
+        self.total_it += 1
 
-        actor_loss = (self.alpha * log_prob - q_pi).mean()
+        if self.total_it % self.policy_delay == 0:
+                # Actor loss (maximize Q from critic1)
+                actor_action = self.actor(obs_seq)
+                actor_loss = -self.critic1(obs_seq, actor_action).mean()
 
-        self.actor_optimizer.zero_grad()
-        actor_loss.backward()
-        self.actor_optimizer.step()
+                self.actor_optimizer.zero_grad()
+                actor_loss.backward()
+                self.actor_optimizer.step()
 
-        # Alpha loss
-        alpha_loss = -(self.log_alpha * (log_prob + self.target_entropy).detach()).mean()
-        self.alpha_optimizer.zero_grad()
-        alpha_loss.backward()
-        self.alpha_optimizer.step()
-        self.alpha = self.log_alpha.exp()
+                # Soft update target networks
+                for target_param, param in zip(self.target_actor.parameters(), self.actor.parameters()):
+                    target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-        # Target update
-        self._soft_update(self.critic1, self.target_critic1, self.tau)
-        self._soft_update(self.critic2, self.target_critic2, self.tau)
+                for target_param, param in zip(self.target_critic1.parameters(), self.critic1.parameters()):
+                    target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-        return critic1_loss.item(), critic2_loss.item(),actor_loss.item(), alpha_loss.item(), self.alpha.item()
+                for target_param, param in zip(self.target_critic2.parameters(), self.critic2.parameters()):
+                    target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        return critic1_loss.item(), critic2_loss.item(), actor_loss.item()
         
-
-    def _soft_update(self, source, target, tau):
-        for src_param, tgt_param in zip(source.parameters(), target.parameters()):
-            tgt_param.data.copy_(tau * src_param.data + (1 - tau) * tgt_param.data)
 
     def save_model(self):
         """
