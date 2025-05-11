@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 import copy
 from networks import RNNCritic, RNNActor, RNNReplayBuffer
+import torch.nn as nn
 
 
 import torch
@@ -33,8 +34,8 @@ class TD3Agent:
             print(f"Loaded actor weights from {actor_ckpt}")
         self.target_actor = copy.deepcopy(self.actor)
 
-        self.critic1 = RNNCritic(obs_dim, action_dim, hidden_size, rnn_layer).to(device)
-        self.critic2 = RNNCritic(obs_dim, action_dim, hidden_size, rnn_layer).to(device)
+        self.critic1 = RNNCritic(obs_dim+action_dim, hidden_size, rnn_layer).to(device)
+        self.critic2 = RNNCritic(obs_dim+action_dim, hidden_size, rnn_layer).to(device)
         self.target_critic1 = copy.deepcopy(self.critic1)
         self.target_critic2 = copy.deepcopy(self.critic2)
 
@@ -54,8 +55,9 @@ class TD3Agent:
         # B, T, _ = obs_seq.shape
 
         # ha = self.actor.init_hidden(B)
+        # obs_seq = obs_seq.to(self.device).float()
 
-        action,_ = self.actor(obs_seq, None)
+        action = self.actor(obs_seq, None)
         # action = action[:, -1, :]  # Shape: (batch_size, state_dim)
         # action = action.detach().squeeze()
         # print(action.shape)
@@ -79,69 +81,103 @@ class TD3Agent:
         # Move to device
         obs_seq = obs_seq.to(self.device)
         action_seq = action_seq.to(self.device)
+        action_seq = action_seq.squeeze(2)
+
         reward_seq = reward_seq.to(self.device)
         next_obs_seq = next_obs_seq.to(self.device)
 
         # Init hidden states
-        h1 = self.critic1.init_hidden(B)
-        h2 = self.critic2.init_hidden(B)
-        th1 = self.target_critic1.init_hidden(B)
-        th2 = self.target_critic2.init_hidden(B)
-        ha = self.actor.init_hidden(B)
+        # h1 = self.critic1.init_hidden(B)
+        # h2 = self.critic2.init_hidden(B)
+        # th1 = self.target_critic1.init_hidden(B)
+        # th2 = self.target_critic2.init_hidden(B)
+        # ha = self.actor.init_hidden(B)
 
         with torch.no_grad():
-            next_action, _ = self.actor(next_obs_seq, ha)
+            n_action = self.actor(next_obs_seq)
+            next_action = n_action[:, -1, :]  # Shape: (batch_size, state_dim)
+            next_action = next_action.detach().squeeze()
+
             noise = torch.normal(0, self.noise_std, size=next_action.shape).to(self.device)
             noise = noise.clamp(-0.5, 0.5)
             next_action = (next_action + noise).clamp(-self.max_action, self.max_action)
+            
+            next_action_seq = action_seq.clone()  # [64, n, 4] (copy of the original action sequence)
+            next_action_seq[:,:-1,:] = action_seq[:, 1:, :]
+            next_action_seq[:, -1, :] = next_action  # [64, n, 4]
 
-            target_q1, _ = self.target_critic1(next_obs_seq, next_action, th1)
-            target_q2, _ = self.target_critic2(next_obs_seq, next_action, th2)
+            critic_states = torch.cat([next_obs_seq, next_action_seq], dim=-1)
 
-            # target_q1 = target_q1[:, -1, :]  # Shape: (batch_size, state_dim)
-            # target_q2 = target_q2[:, -1, :]  # Shape: (batch_size, state_dim)
-            target_q = reward_seq + self.gamma * torch.min(target_q1, target_q2)
+            target_q1 = self.target_critic1(critic_states)
+            target_q2 = self.target_critic2(critic_states)
+
+            target_q1 = target_q1[:, -1, :]  # Shape: (batch_size, state_dim)
+            target_q1 = target_q1.detach().squeeze()
+            target_q2 = target_q2[:, -1, :]  # Shape: (batch_size, state_dim)
+            target_q2 = target_q2.detach().squeeze()
+
+            reward = reward_seq[:, -1, :]
+            target_q = reward + self.gamma * torch.min(target_q1, target_q2)
 
         # Critic losses
+        critic_states = torch.cat([obs_seq, action_seq], dim=-1)
+        q1 = self.critic1(critic_states)
+        q2 = self.critic2(critic_states)
 
-        q1_pred, _ = self.critic1(obs_seq, action_seq, h1)
-        q2_pred, _ = self.critic2(obs_seq, action_seq, h2)
+        q1 = q1[:, -1, :]  # Shape: (batch_size, state_dim)
+        q2 = q2[:, -1, :]  # Shape: (batch_size, state_dim)
 
-        critic1_loss = F.mse_loss(q1_pred, target_q)
-        critic2_loss = F.mse_loss(q2_pred, target_q)
+        critic1_loss = nn.MSELoss()(q1, target_q)
+        critic2_loss = nn.MSELoss()(q2, target_q)
+
+        print(f"Average Q1: {q1.mean().item():.4f}",
+            f"Average Q2: {q2.mean().item():.4f}",
+            f"Average TQ: {target_q.mean().item():.4f}",
+            f"reward: {reward.mean().item():.4f}")
 
         self.critic1_optimizer.zero_grad()
+        # torch.autograd.set_detect_anomaly(True)
         critic1_loss.backward()
         self.critic1_optimizer.step()
-
+        
+        # print("check point")
         self.critic2_optimizer.zero_grad()
+        # torch.autograd.set_detect_anomaly(True)
         critic2_loss.backward()
         self.critic2_optimizer.step()
+        # print("check point2")
 
         # Actor loss: minimize the negative Q-value (maximize Q-value)
         actor_loss = torch.tensor(0.0)  # Default value if not updated
         self.total_it += 1
 
         if self.total_it % self.policy_delay == 0:
-                # Actor loss (maximize Q from critic1)
-                # print(obs_seq.shape)
-                actor_action,_ = self.actor(obs_seq, None)
-                actor_loss,_ = self.critic1(obs_seq, actor_action)
-                actor_loss = - actor_loss.mean()
+            # Actor loss (maximize Q from critic1)
 
-                self.actor_optimizer.zero_grad()
-                actor_loss.backward()
-                self.actor_optimizer.step()
+            actor_action = self.actor(obs_seq)
+            action_seq[:, -1] = actor_action[:, -1, :].detach().squeeze()
 
-                # Soft update target networks
-                for target_param, param in zip(self.target_actor.parameters(), self.actor.parameters()):
-                    target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+            critic_states = torch.cat([obs_seq, action_seq], dim=-1)
 
-                for target_param, param in zip(self.target_critic1.parameters(), self.critic1.parameters()):
-                    target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+            q = self.critic1(critic_states)
+            q = q[:, -1, :]  # Shape: (batch_size, state_dim)
 
-                for target_param, param in zip(self.target_critic2.parameters(), self.critic2.parameters()):
-                    target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+            actor_loss = - q.mean()
+            
+            self.actor_optimizer.zero_grad()
+            # torch.autograd.set_detect_anomaly(True)
+            actor_loss.backward()
+            self.actor_optimizer.step()
+
+            # Soft update target networks
+            for target_param, param in zip(self.target_actor.parameters(), self.actor.parameters()):
+                target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        for target_param, param in zip(self.target_critic1.parameters(), self.critic1.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        for target_param, param in zip(self.target_critic2.parameters(), self.critic2.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
         return critic1_loss.item(), critic2_loss.item(), actor_loss.item()
         

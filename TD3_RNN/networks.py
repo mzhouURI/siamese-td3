@@ -10,14 +10,16 @@ class RNNActor(nn.Module):
         self.rnn = nn.LSTM(obs_dim, hidden_size, rnn_layers, batch_first=True)
         self.mean_head = nn.Linear(hidden_size, action_dim)
 
-    def forward(self, obs_seq, hidden):
+    def forward(self, obs_seq, hidden = None):
         # obs_seq: (B, T, obs_dim)
         self.rnn.flatten_parameters()
         rnn_out, hidden = self.rnn(obs_seq, hidden)  # rnn_out: (B, T, hidden_size)
-        mean = self.mean_head(rnn_out)  # (B, T, action_dim)
-        action = torch.tanh(mean)  # Apply ReLU activation to the output
-        # action = torch.clamp(action, -1, 1)  # Clamp within action bounds
-        return action, hidden
+        action = self.mean_head(rnn_out)  # (B, T, action_dim)
+
+        # action = last_out[:, -1, :].clone()  # Ensures it's not a view
+
+        return action
+    
 
     def init_hidden(self, batch_size):
         num_layers = self.rnn.num_layers
@@ -29,21 +31,23 @@ class RNNActor(nn.Module):
         return (h, c)
 
 class RNNCritic(nn.Module):
-    def __init__(self, obs_dim, action_dim, hidden_size=128, rnn_layers=1):
+    def __init__(self, obs_dim, hidden_size=128, rnn_layers=1):
         super().__init__()
-        input_dim = obs_dim + action_dim
+        input_dim = obs_dim
+
         self.rnn = nn.LSTM(input_dim, hidden_size, rnn_layers, batch_first=True)
-        
         self.q_head = nn.Linear(hidden_size, 1)  # Single Q-value output
 
     
-    def forward(self, obs_seq, action_seq, hidden_state=None):
+    def forward(self, obs_seq, hidden=None):
         # Concatenate obs and action along feature dim: (B, T, obs+action)
-        x = torch.cat([obs_seq, action_seq], dim=-1)
+        # x = torch.cat([obs_seq, action_seq], dim=-1)
         self.rnn.flatten_parameters()
-        rnn_out, next_hidden = self.rnn(x, hidden_state)  # rnn_out: (B, T, hidden_size)
+        rnn_out, hidden = self.rnn(obs_seq, hidden)  # rnn_out: (B, T, hidden_size)
         q_values = self.q_head(rnn_out)  # (B, T, 1)
-        return q_values, next_hidden
+        # q = q_values[:, -1, :].clone()  # Ensures it's not a view
+
+        return q_values
 
     def init_hidden(self, batch_size):
         num_layers = self.rnn.num_layers

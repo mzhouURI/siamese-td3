@@ -25,7 +25,7 @@ data = np.loadtxt('offline_data/filename1.csv', delimiter=',')
 #16:18: roll, pitch, yaw, 
 #19:24 u,v,w,p,q,r
 error_states = data[:, [3,5,6,7]]
-states = data[:, 16:25]
+states = data[:, 15:25]
 # prev_actions = data[:-1,-4:]
 states = np.concatenate([states, error_states], axis=1)
 # states = data[:, [ 17, 18, 19, 21, 24]] 
@@ -84,7 +84,7 @@ for epoch in range(num_epochs):
 
         # print(error_seq.shape)
         # print(state_seq.shape)
-        rnn_action, hidden= model.forward(states_seq, hidden =None)  # Your model takes (state, error) as inputs
+        rnn_action= model.forward(states_seq, hidden =None)  # Your model takes (state, error) as inputs
 
         rnn_action = rnn_action[:, -1, :]  # Shape: (batch_size, state_dim)
         # print(rnn_action)

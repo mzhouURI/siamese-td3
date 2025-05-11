@@ -197,24 +197,24 @@ class TD3Agent:
         self.total_it += 1
 
         if self.total_it % self.policy_delay == 0:
-                # Actor loss (maximize Q from critic1)
-                actor_action = self.actor(state, error)
-                full_action_seq[:, -1, :] = actor_action  # [64, n, 4]
-                actor_loss = -self.critic1(state, error, full_action_seq).mean()
+            # Actor loss (maximize Q from critic1)
+            actor_action = self.actor(state, error)
+            full_action_seq[:, -1, :] = actor_action  # [64, n, 4]
+            actor_loss = -self.critic1(state, error, full_action_seq).mean()
 
-                self.actor_optimizer.zero_grad()
-                actor_loss.backward()
-                self.actor_optimizer.step()
+            self.actor_optimizer.zero_grad()
+            actor_loss.backward()
+            self.actor_optimizer.step()
 
-                # Soft update target networks
-                for target_param, param in zip(self.target_actor.parameters(), self.actor.parameters()):
-                    target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+            # Soft update target networks
+            for target_param, param in zip(self.target_actor.parameters(), self.actor.parameters()):
+                target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-                for target_param, param in zip(self.target_critic1.parameters(), self.critic1.parameters()):
-                    target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+        for target_param, param in zip(self.target_critic1.parameters(), self.critic1.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-                for target_param, param in zip(self.target_critic2.parameters(), self.critic2.parameters()):
-                    target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+        for target_param, param in zip(self.target_critic2.parameters(), self.critic2.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
         return critic1_loss.item(), critic2_loss.item(), actor_loss.item()
 

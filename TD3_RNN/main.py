@@ -45,6 +45,7 @@ class SAC_RNN_ROS(Node):
         
         self.set_point_update_flag = False
         state = {
+            'z': {0},
             'euler': (0,0,0), # Quaternion (x, y, z, w)
             'uvw': (0,0,0),
             'pqr': (0,0,0),
@@ -57,8 +58,8 @@ class SAC_RNN_ROS(Node):
         self.state = self.flatten_state(state)
         self.error_state = self.flatten_state(error_state)
         
-        self.window_size = 20
-        self.batch_size = 64
+        self.window_size = 10
+        self.batch_size = 32
         self.batch_warmup_size =self.batch_size*1
 
         self.rnn_obs_buffer = collections.deque(maxlen=self.window_size)
@@ -72,11 +73,11 @@ class SAC_RNN_ROS(Node):
                                 device = self.device,
                                 hidden_size = 128, rnn_layer = 2,
                                 actor_ckpt = 'actor_rnn.pth',
-                                actor_lr = 1e-6, critic_lr= 1e-5,  tau = 0.001,
+                                actor_lr = 1e-7, critic_lr= 1e-5,  tau = 0.005, noise_std= 0.1, policy_delay=10
                                 )
         self.total_reward = 0
 
-        self.timer_setpoint_update = self.create_timer(30, self.set_point_update)
+        self.timer_setpoint_update = self.create_timer(60, self.set_point_update)
         self.timer_setpoint_pub = self.create_timer(1.0, self.set_point_publish)
         self.timer_pub = self.create_timer(0.1, self.step)
 
@@ -129,6 +130,7 @@ class SAC_RNN_ROS(Node):
     def state_callback(self, msg):
 
         state = {
+            'z': {msg.position.z},
             'euler': (msg.orientation.x, msg.orientation.y, msg.orientation.z), 
             'uvw': (msg.velocity.x, msg.velocity.y, msg.velocity.z),
             'pqr': {msg.angular_rate.x, msg.angular_rate.y, msg.angular_rate.z}
@@ -150,64 +152,62 @@ class SAC_RNN_ROS(Node):
         # try:
         #if just updated setpoint, we clear the buffer and wait for enough states
         if self.set_point_update_flag:
-                self.set_point_update_flag = False
-                print("skip this step")
-                self.rnn_new_obs_buffer.clear()
-                self.rnn_reward_buffer.clear()
-                self.rnn_action_buffer.clear()
-                reward = 0
+            self.set_point_update_flag = False
+            print("skip this step")
+            self.rnn_new_obs_buffer.clear()
+            self.rnn_reward_buffer.clear()
+            self.rnn_action_buffer.clear()
+            reward = 0
+        else:
+            #get the states before update so this is our previous state.
+            rnn_prev_obs = self.rnn_new_obs_buffer
+            # get new states
+            new_state = torch.tensor(np.concatenate([self.state, self.error_state]), dtype=torch.float32)
+            self.rnn_new_obs_buffer.append(new_state)
 
-        #get the states before update so this is our previous state.
-        rnn_prev_obs = self.rnn_new_obs_buffer
-        # get new states
-        new_state = torch.tensor(np.concatenate([self.state, self.error_state]), dtype=torch.float32)
-        self.rnn_new_obs_buffer.append(new_state)
+            # get new error state for computing reward
+            new_error_state = torch.tensor(self.error_state, dtype=torch.float32).unsqueeze(0)  
 
-        # get new error state for computing reward
-        new_error_state = torch.tensor(self.error_state, dtype=torch.float32).unsqueeze(0)  
+            #calculate reward from previous action
+            reward = self.calculate_reward(new_error_state)
+            reward = reward.detach().float().unsqueeze(0)
+            self.rnn_reward_buffer.append(reward)
 
-        #calculate reward from previous action
-        reward = self.calculate_reward(new_error_state)
-        reward = reward.detach().float().unsqueeze(0)
-        self.rnn_reward_buffer.append(reward)
+            #take new action                
+            #store the old action seq first
+            rnn_prev_actions = self.rnn_action_buffer
+            #take new action
+            # hidden = self.model.actor.init_hidden(self.batch_size)
+            obs_seq = torch.stack(list(self.rnn_new_obs_buffer), dim=0)
+            # Add batch dimension: shape (1, T, obs_dim)
+            obs_seq = obs_seq.unsqueeze(0)
+            obs_seq = obs_seq.to(self.device)
+            
+            action = self.model.select_action(obs_seq)
+            action = action[:, -1, :]  # Shape: (batch_size, state_dim)
+            action = action.detach().squeeze()
+            # print(action.shape)
+            self.rnn_action_buffer.append(action)
+            # print(f"rnn action: {self.rnn_action_buffer.shape}")
 
-        #take new action                
-        #store the old action seq first
-        rnn_prev_actions = self.rnn_action_buffer
-        #take new action
-        hidden = self.model.actor.init_hidden(self.batch_size)
-        obs_seq = torch.stack(list(self.rnn_new_obs_buffer), dim=0)
-        # Add batch dimension: shape (1, T, obs_dim)
-        obs_seq = obs_seq.unsqueeze(0)
-        obs_seq = obs_seq.to(self.device)
-        
-        action = self.model.select_action(obs_seq, hidden)
-        action = action[:, -1, :]  # Shape: (batch_size, state_dim)
-        action = action.detach().squeeze()
-        # print(action.shape)
-        self.rnn_action_buffer.append(action)
-        # print(f"rnn action: {self.rnn_action_buffer.shape}")
-
-        #publish action
-        msg = Float64MultiArray()
-        msg.data = action.detach().cpu().numpy().flatten().tolist()                   
-        self.thruster_pub.publish(msg)
-
-        # add to buffer when the rnn sequence buffer is filled
-        if(len(self.rnn_action_buffer)==self.window_size):     
-            # print("adding")    
-            self.model.replay_buffer.add(rnn_prev_obs, rnn_prev_actions, 
-                                            self.rnn_reward_buffer, self.rnn_new_obs_buffer)
-            self.total_reward  = self.total_reward + reward
-
-        
-
-        #do training if there are enough data in the replay buffer
-        if len(self.model.replay_buffer.buffer) > self.batch_warmup_size:  # Start training after enough experiences
-            c1_loss, c2_loss, actor_loss = self.model.update(batch_size=self.batch_size)
+            #publish action
             msg = Float64MultiArray()
-            msg.data = [float(c1_loss), float(c2_loss), float(actor_loss)]
-            self.loss_pub.publish(msg)
+            msg.data = action.detach().cpu().numpy().flatten().tolist()                   
+            self.thruster_pub.publish(msg)
+
+            # add to buffer when the rnn sequence buffer is filled
+            if(len(self.rnn_action_buffer)==self.window_size):     
+                # print("adding")    
+                self.model.replay_buffer.add(rnn_prev_obs, rnn_prev_actions, 
+                                                self.rnn_reward_buffer, self.rnn_new_obs_buffer)
+                self.total_reward  = self.total_reward + reward
+
+                #do training if there are enough data in the replay buffer
+                if len(self.model.replay_buffer.buffer) > self.batch_warmup_size:  # Start training after enough experiences
+                    c1_loss, c2_loss, actor_loss = self.model.update(batch_size=self.batch_size)
+                    msg = Float64MultiArray()
+                    msg.data = [float(c1_loss), float(c2_loss), float(actor_loss)]
+                    self.loss_pub.publish(msg)
 
         
         # except Exception as e:
@@ -217,24 +217,24 @@ class SAC_RNN_ROS(Node):
         new_error = new_error_pose.view(-1, 1)
 
         # Define a weight matrix W: shape [3, 3]
-        w_z = 0.25
-        w_pitch = 0.25
-        w_yaw = 0.25
-        w_u = 0.25
+        w_z = 0.3
+        w_pitch = 0.1
+        w_yaw = 0.2
+        w_u = 0.4
         
         # Creat diagonal weight matrix W
         W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32)
         error_reward = torch.sum(abs(new_error) * W )
 
-        bonus = -1000
+        bonus = -100
         if abs(new_error[0])<0.1 and abs(new_error[1])<0.05 and abs(new_error[2])<0.05 and abs(new_error[3])<0.01:
             bonus = 0
             # print("bonus")
 
-        error_reward = -100*error_reward
+        error_reward = -10*error_reward
         reward = error_reward + bonus
-        print(f"error_reward: {error_reward: .4f}",
-              f"bonus: {bonus: .4f}")
+        # print(f"error_reward: {reward: .4f}",
+        #       f"bonus: {bonus: .4f}")
 
         return reward
 
