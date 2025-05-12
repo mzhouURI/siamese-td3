@@ -94,27 +94,29 @@ class TD3Agent:
         # ha = self.actor.init_hidden(B)
 
         with torch.no_grad():
-            n_action = self.actor(next_obs_seq)
-            next_action = n_action[:, -1, :]  # Shape: (batch_size, state_dim)
-            next_action = next_action.detach().squeeze()
+            next_action = self.actor(next_obs_seq)
+            # next_action = n_action[:, -1, :]  # Shape: (batch_size, state_dim)
+            # next_action = next_action.detach().squeeze()
 
             noise = torch.normal(0, self.noise_std, size=next_action.shape).to(self.device)
             noise = noise.clamp(-0.5, 0.5)
             next_action = (next_action + noise).clamp(-self.max_action, self.max_action)
             
-            next_action_seq = action_seq.clone()  # [64, n, 4] (copy of the original action sequence)
-            next_action_seq[:,:-1,:] = action_seq[:, 1:, :]
-            next_action_seq[:, -1, :] = next_action  # [64, n, 4]
+            # next_action_seq = action_seq.clone()  # [64, n, 4] (copy of the original action sequence)
+            # next_action_seq[:,:-1,:] = action_seq[:, 1:, :]
+            # next_action_seq[:, -1, :] = next_action  # [64, n, 4]
 
-            critic_states = torch.cat([next_obs_seq, next_action_seq], dim=-1)
+            next_action[:, :-1, :] = action_seq[:, 1:, :] #replace some next action with exiisting action seq.
+
+            critic_states = torch.cat([next_obs_seq, next_action], dim=-1)
 
             target_q1 = self.target_critic1(critic_states)
             target_q2 = self.target_critic2(critic_states)
 
             target_q1 = target_q1[:, -1, :]  # Shape: (batch_size, state_dim)
-            target_q1 = target_q1.detach().squeeze()
+            # target_q1 = target_q1.detach().squeeze()
             target_q2 = target_q2[:, -1, :]  # Shape: (batch_size, state_dim)
-            target_q2 = target_q2.detach().squeeze()
+            # target_q2 = target_q2.detach().squeeze()
 
             reward = reward_seq[:, -1, :]
             target_q = reward + self.gamma * torch.min(target_q1, target_q2)
@@ -133,7 +135,7 @@ class TD3Agent:
         print(f"Average Q1: {q1.mean().item():.4f}",
             f"Average Q2: {q2.mean().item():.4f}",
             f"Average TQ: {target_q.mean().item():.4f}",
-            f"reward: {reward.mean().item():.4f}")
+            f"reward: {reward_seq.mean().item():.4f}")
 
         self.critic1_optimizer.zero_grad()
         # torch.autograd.set_detect_anomaly(True)
@@ -155,11 +157,14 @@ class TD3Agent:
             # Actor loss (maximize Q from critic1)
 
             actor_action = self.actor(obs_seq)
-            action_seq[:, -1] = actor_action[:, -1, :].detach().squeeze()
+            # action_seq[:, -1] = actor_action[:, -1, :].detach().squeeze()
 
-            critic_states = torch.cat([obs_seq, action_seq], dim=-1)
+            actor_action[:, :-1, :] = action_seq[:, 1:, :] #plug existing action seq except the first one into actor
+
+            critic_states = torch.cat([obs_seq, actor_action], dim=-1)
 
             q = self.critic1(critic_states)
+
             q = q[:, -1, :]  # Shape: (batch_size, state_dim)
 
             actor_loss = - q.mean()

@@ -58,8 +58,8 @@ class SAC_RNN_ROS(Node):
         self.state = self.flatten_state(state)
         self.error_state = self.flatten_state(error_state)
         
-        self.window_size = 10
-        self.batch_size = 32
+        self.window_size = 20
+        self.batch_size = 64
         self.batch_warmup_size =self.batch_size*1
 
         self.rnn_obs_buffer = collections.deque(maxlen=self.window_size)
@@ -67,13 +67,15 @@ class SAC_RNN_ROS(Node):
         self.rnn_action_buffer = collections.deque(maxlen=self.window_size)
         self.rnn_reward_buffer = collections.deque(maxlen=self.window_size)
 
+        self.current_action = torch.zeros(4, 1)
+
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = TD3Agent(obs_dim = len(self.state) + len(self.error_state), action_dim = 4,
                                 seq_len = self.window_size,
                                 device = self.device,
                                 hidden_size = 128, rnn_layer = 2,
                                 actor_ckpt = 'actor_rnn.pth',
-                                actor_lr = 1e-7, critic_lr= 1e-5,  tau = 0.005, noise_std= 0.1, policy_delay=10
+                                actor_lr = 1e-6, critic_lr= 1e-4,  tau = 0.001, noise_std= 0.1, policy_delay=10
                                 )
         self.total_reward = 0
 
@@ -182,34 +184,33 @@ class SAC_RNN_ROS(Node):
             # Add batch dimension: shape (1, T, obs_dim)
             obs_seq = obs_seq.unsqueeze(0)
             obs_seq = obs_seq.to(self.device)
-            
-            action = self.model.select_action(obs_seq)
-            action = action[:, -1, :]  # Shape: (batch_size, state_dim)
-            action = action.detach().squeeze()
-            # print(action.shape)
-            self.rnn_action_buffer.append(action)
-            # print(f"rnn action: {self.rnn_action_buffer.shape}")
-
-            #publish action
-            msg = Float64MultiArray()
-            msg.data = action.detach().cpu().numpy().flatten().tolist()                   
-            self.thruster_pub.publish(msg)
 
             # add to buffer when the rnn sequence buffer is filled
-            if(len(self.rnn_action_buffer)==self.window_size):     
-                # print("adding")    
+            if(len(self.rnn_action_buffer)==self.window_size):   
+
+                action = self.model.select_action(obs_seq)
+                #take the last one from the network
+                action = action[:, -1, :]  # Shape: (batch_size, state_dim)
+                action = action.detach().squeeze()
+                self.current_action = action
+
                 self.model.replay_buffer.add(rnn_prev_obs, rnn_prev_actions, 
                                                 self.rnn_reward_buffer, self.rnn_new_obs_buffer)
                 self.total_reward  = self.total_reward + reward
 
-                #do training if there are enough data in the replay buffer
-                if len(self.model.replay_buffer.buffer) > self.batch_warmup_size:  # Start training after enough experiences
-                    c1_loss, c2_loss, actor_loss = self.model.update(batch_size=self.batch_size)
-                    msg = Float64MultiArray()
-                    msg.data = [float(c1_loss), float(c2_loss), float(actor_loss)]
-                    self.loss_pub.publish(msg)
+            #do training if there are enough data in the replay buffer
+            if len(self.model.replay_buffer.buffer) > self.batch_warmup_size:  # Start training after enough experiences
+                c1_loss, c2_loss, actor_loss = self.model.update(batch_size=self.batch_size)
+                msg = Float64MultiArray()
+                msg.data = [float(c1_loss), float(c2_loss), float(actor_loss)]
+                self.loss_pub.publish(msg)
 
-        
+
+            self.rnn_action_buffer.append(self.current_action)
+            #publish action
+            msg = Float64MultiArray()
+            msg.data = self.current_action.detach().cpu().numpy().flatten().tolist()                   
+            self.thruster_pub.publish(msg)
         # except Exception as e:
         #     self.get_logger().error(f"Error in step(): {e}")
 
@@ -226,9 +227,9 @@ class SAC_RNN_ROS(Node):
         W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32)
         error_reward = torch.sum(abs(new_error) * W )
 
-        bonus = -100
+        bonus = 0
         if abs(new_error[0])<0.1 and abs(new_error[1])<0.05 and abs(new_error[2])<0.05 and abs(new_error[3])<0.01:
-            bonus = 0
+            bonus = 200
             # print("bonus")
 
         error_reward = -10*error_reward

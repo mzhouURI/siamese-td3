@@ -8,13 +8,16 @@ class RNNActor(nn.Module):
     def __init__(self, obs_dim, action_dim, hidden_size=128, rnn_layers=1):
         super().__init__()
         self.rnn = nn.LSTM(obs_dim, hidden_size, rnn_layers, batch_first=True)
-        self.mean_head = nn.Linear(hidden_size, action_dim)
+        self.fc = nn.Linear(hidden_size, action_dim)
 
     def forward(self, obs_seq, hidden = None):
         # obs_seq: (B, T, obs_dim)
         self.rnn.flatten_parameters()
         rnn_out, hidden = self.rnn(obs_seq, hidden)  # rnn_out: (B, T, hidden_size)
-        action = self.mean_head(rnn_out)  # (B, T, action_dim)
+
+        # rnn_out = rnn_out[:,-1,:]  #grab last one?
+
+        action = self.fc(rnn_out)  # (B, T, action_dim)
 
         # action = last_out[:, -1, :].clone()  # Ensures it's not a view
 
@@ -44,6 +47,9 @@ class RNNCritic(nn.Module):
         # x = torch.cat([obs_seq, action_seq], dim=-1)
         self.rnn.flatten_parameters()
         rnn_out, hidden = self.rnn(obs_seq, hidden)  # rnn_out: (B, T, hidden_size)
+
+        # rnn_out = rnn_out[:,-1,:]  #grab last one?
+        
         q_values = self.q_head(rnn_out)  # (B, T, 1)
         # q = q_values[:, -1, :].clone()  # Ensures it's not a view
 

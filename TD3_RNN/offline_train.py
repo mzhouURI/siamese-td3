@@ -24,12 +24,12 @@ data = np.loadtxt('offline_data/filename1.csv', delimiter=',')
 #13-15: x,y,z,
 #16:18: roll, pitch, yaw, 
 #19:24 u,v,w,p,q,r
-error_states = data[:, [3,5,6,7]]
-states = data[:, 15:25]
+error_states = data[:-1, [3,5,6,7]]
+states = data[:-1, 15:25]
 # prev_actions = data[:-1,-4:]
 states = np.concatenate([states, error_states], axis=1)
 # states = data[:, [ 17, 18, 19, 21, 24]] 
-actions = data[:, -4:]
+actions = data[1:, -4:]
 
 state_dim = states.shape[1]
 action_dim = actions.shape[1]
@@ -61,7 +61,7 @@ training_data = np.hstack((states, actions))
 ep_loss = []
 seq_len = 20       # sequence length for transformer
 batch_size = 64    # number of sequences per batch
-num_epochs = 40    # how many passes over the dataset
+num_epochs = 100    # how many passes over the dataset
 
 
 
@@ -78,15 +78,17 @@ for epoch in range(num_epochs):
         batch = batch.to(device)  # shape: (batch_size, seq_len, input_dim + action_dim)
 
         # Separate components
-        states_seq = batch[:, :-1, :state_dim]                             # (B, T, error_dim)
+        # states_seq = batch[:, :-1, :state_dim]                             # (B, T, error_dim)
         # exit()
-        actual_action = batch[:, -1, -action_dim:]                    # (B, action_dim)
+        # actual_action = batch[:, -1, -action_dim:]                    # (B, action_dim)
+        # print(batch.shape)
+        states_seq = batch [:, : , :state_dim]
+        actual_action = batch[:, :, -action_dim:]
+        # print(states_seq.shape)
+        # print(actual_action.shape)
+        rnn_action= model.forward(states_seq)  # Your model takes (state, error) as inputs
 
-        # print(error_seq.shape)
-        # print(state_seq.shape)
-        rnn_action= model.forward(states_seq, hidden =None)  # Your model takes (state, error) as inputs
-
-        rnn_action = rnn_action[:, -1, :]  # Shape: (batch_size, state_dim)
+        # rnn_action = rnn_action[:, -1, :]  # Shape: (batch_size, state_dim)
         # print(rnn_action)
         # print(actual_action)
 
@@ -102,8 +104,8 @@ for epoch in range(num_epochs):
 
         total_loss += loss.item()
 
-    print(rnn_action[-1,:].detach().cpu().numpy())
-    print(actual_action[-1,:].cpu().numpy())
+    # print(rnn_action[:,-1,:].detach().cpu().numpy())
+    # print(actual_action[:,-1,:].cpu().numpy())
 
     ep_loss.append(total_loss)
 
