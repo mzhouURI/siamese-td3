@@ -21,7 +21,7 @@ class RNNActor(nn.Module):
 
         # action = last_out[:, -1, :].clone()  # Ensures it's not a view
 
-        return action
+        return action, hidden
     
 
     def init_hidden(self, batch_size):

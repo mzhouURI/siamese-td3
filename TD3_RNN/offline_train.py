@@ -86,7 +86,7 @@ for epoch in range(num_epochs):
         actual_action = batch[:, :, -action_dim:]
         # print(states_seq.shape)
         # print(actual_action.shape)
-        rnn_action= model.forward(states_seq)  # Your model takes (state, error) as inputs
+        rnn_action, _= model.forward(states_seq)  # Your model takes (state, error) as inputs
 
         # rnn_action = rnn_action[:, -1, :]  # Shape: (batch_size, state_dim)
         # print(rnn_action)

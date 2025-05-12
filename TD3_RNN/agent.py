@@ -41,27 +41,37 @@ class TD3Agent:
         self.target_critic2 = copy.deepcopy(self.critic2)
 
         #replay buffer
-        self.replay_buffer = RNNReplayBuffer(1000000, seq_len, obs_dim, action_dim, device)
+        self.replay_buffer = RNNReplayBuffer(1000000, seq_len, obs_dim, action_dim)
 
         # Optimizers
-        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=actor_lr)
-        self.critic1_optimizer = torch.optim.Adam(self.critic1.parameters(), lr=critic_lr)
-        self.critic2_optimizer = torch.optim.Adam(self.critic2.parameters(), lr=critic_lr)
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=actor_lr, amsgrad = True, weight_decay=1e-4)
+        self.critic1_optimizer = torch.optim.Adam(self.critic1.parameters(), lr=critic_lr, amsgrad = True, weight_decay=1e-4)
+        self.critic2_optimizer = torch.optim.Adam(self.critic2.parameters(), lr=critic_lr, amsgrad = True, weight_decay=1e-4)
 
 
 
-    def select_action(self, obs_seq, noise=True):
+    def select_action(self, obs_seq, hidden = None, noise=True):
         # Select action using the actor network (add exploration noise)
         # obs_seq = obs_seq.to(self.device).float()
         # B, T, _ = obs_seq.shape
 
         # ha = self.actor.init_hidden(B)
         # obs_seq = obs_seq.to(self.device).float()
-
-        action = self.actor(obs_seq, None)
+        action, hidden = self.actor(obs_seq, hidden)
+        # print(type(hidden))
+        # print(hidden[0].shape)
+        # print(hidden)
+        # exit()
         # action = action[:, -1, :]  # Shape: (batch_size, state_dim)
         # action = action.detach().squeeze()
         # print(action.shape)
+
+        if hidden is not None:
+            if isinstance(hidden, tuple):
+                hidden = tuple(h.detach() for h in hidden)
+            else:
+                hidden = hidden.detach()
+
         if noise:
             noise_tensor = torch.normal(
                 mean=0.0,
@@ -73,7 +83,7 @@ class TD3Agent:
 
         # Clip actions to valid range
         action = torch.clamp(action, -self.max_action, self.max_action)
-        return action
+        return action, hidden
 
     def update(self, batch_size):
         obs_seq, action_seq, reward_seq, next_obs_seq = self.replay_buffer.sample(batch_size)
@@ -96,7 +106,7 @@ class TD3Agent:
         # ha = self.actor.init_hidden(B)
 
         with torch.no_grad():
-            next_action = self.actor(next_obs_seq)
+            next_action,_ = self.actor(next_obs_seq)
             # next_action = n_action[:, -1, :]  # Shape: (batch_size, state_dim)
             # next_action = next_action.detach().squeeze()
 
@@ -108,7 +118,7 @@ class TD3Agent:
             # next_action_seq[:,:-1,:] = action_seq[:, 1:, :]
             # next_action_seq[:, -1, :] = next_action  # [64, n, 4]
 
-            next_action[:, :-1, :] = action_seq[:, 1:, :] #replace some next action with exiisting action seq.
+            # next_action[:, :-1, :] = action_seq[:, 1:, :] #replace some next action with exiisting action seq.
 
             critic_states = torch.cat([next_obs_seq, next_action], dim=-1)
 
@@ -163,10 +173,10 @@ class TD3Agent:
         if self.total_it % self.policy_delay == 0:
             # Actor loss (maximize Q from critic1)
 
-            actor_action = self.actor(obs_seq)
+            actor_action, _ = self.actor(obs_seq)
             # action_seq[:, -1] = actor_action[:, -1, :].detach().squeeze()
 
-            actor_action[:, :-1, :] = action_seq[:, 1:, :] #plug existing action seq except the first one into actor
+            # actor_action[:, :-1, :] = action_seq[:, 1:, :] #plug existing action seq except the first one into actor
 
             critic_states = torch.cat([obs_seq, actor_action], dim=-1)
 

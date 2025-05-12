@@ -68,6 +68,10 @@ class SAC_RNN_ROS(Node):
         self.rnn_action_buffer = collections.deque(maxlen=self.window_size)
         self.rnn_reward_buffer = collections.deque(maxlen=self.window_size)
 
+        loss_average_window = 100
+        self.c1_loss = collections.deque(maxlen=loss_average_window)
+        self.c2_loss = collections.deque(maxlen=loss_average_window)
+
         self.current_action = torch.zeros(4, 1)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -76,14 +80,14 @@ class SAC_RNN_ROS(Node):
                                 device = self.device,
                                 hidden_size = 128, rnn_layer = 2,
                                 actor_ckpt = 'actor_rnn.pth',
-                                actor_lr = 1e-6, critic_lr= 1e-4,  tau = 0.001, noise_std= 0.1, policy_delay=10
+                                actor_lr = 1e-7, critic_lr= 1e-3,  tau = 0.001, noise_std= 0.1, policy_delay=10
                                 )
         self.total_reward = 0
 
-        self.timer_setpoint_update = self.create_timer(60, self.set_point_update)
+        self.timer_setpoint_update = self.create_timer(100, self.set_point_update)
         self.timer_setpoint_pub = self.create_timer(1.0, self.set_point_publish)
         self.timer_pub = self.create_timer(0.1, self.step)
-
+        self.actor_hidden = self.model.actor.init_hidden(1)
         self.set_controller = self.create_client(SetBool, '/mvp2_test_robot/controller/set')  
         self.active_controller(True)
         
@@ -192,7 +196,8 @@ class SAC_RNN_ROS(Node):
             # print(len(rnn_prev_actions))
             if(len(self.rnn_action_buffer)==self.window_size):   
 
-                action = self.model.select_action(obs_seq)
+                action, self.actor_hidden = self.model.select_action(obs_seq, hidden = self.actor_hidden)
+                # print(self.actor_hidden.shape)
                 #take the last one from the network
                 action = action[:, -1, :]  # Shape: (batch_size, state_dim)
                 action = action.detach().squeeze()
@@ -206,8 +211,11 @@ class SAC_RNN_ROS(Node):
                 if len(self.model.replay_buffer.buffer) > self.batch_warmup_size:  # Start training after enough experiences
                     # print(f"buffer size: {len(self.model.replay_buffer.buffer)}")
                     c1_loss, c2_loss, actor_loss = self.model.update(batch_size=self.batch_size)
+                    self.c1_loss.append(c1_loss)
+                    self.c2_loss.append(c2_loss)
+
                     msg = Float64MultiArray()
-                    msg.data = [float(c1_loss), float(c2_loss), float(actor_loss)]
+                    msg.data = [float(np.mean(self.c1_loss)), float(np.mean(self.c2_loss)), float(actor_loss)]
                     self.loss_pub.publish(msg)
 
 
@@ -255,9 +263,9 @@ class SAC_RNN_ROS(Node):
         error_reward = -10*error_reward
         accum_error_reward = - 2*accum_error
         reward = error_reward + bonus + accum_error_reward
-        print(f"error_reward: {reward: .4f}",
-              f"accu_reward: {accum_error_reward: .4f}",
-              f"bonus: {bonus: .4f}")
+        # print(f"error_reward: {reward: .4f}",
+        #       f"accu_reward: {accum_error_reward: .4f}",
+        #       f"bonus: {bonus: .4f}")
 
         return reward
 
