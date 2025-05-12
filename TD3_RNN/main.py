@@ -68,8 +68,10 @@ class SAC_RNN_ROS(Node):
         self.rnn_action_buffer = collections.deque(maxlen=self.window_size)
         self.rnn_reward_buffer = collections.deque(maxlen=self.window_size)
 
-        self.current_action = torch.zeros(4, 1)
+        self.rnn_actor_hidden_buffer = collections.deque(maxlen=self.window_size)
 
+
+        self.current_action = torch.zeros(4, 1)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = TD3Agent(obs_dim = len(self.state) + len(self.error_state), action_dim = 4,
                                 seq_len = self.window_size,
@@ -78,6 +80,9 @@ class SAC_RNN_ROS(Node):
                                 actor_ckpt = 'actor_rnn.pth',
                                 actor_lr = 1e-6, critic_lr= 1e-4,  tau = 0.001, noise_std= 0.1, policy_delay=10
                                 )
+        
+        self.current_rnn_actor_hidden = self.model.actor.init_hidden(1)
+        
         self.total_reward = 0
 
         self.timer_setpoint_update = self.create_timer(60, self.set_point_update)
@@ -161,6 +166,7 @@ class SAC_RNN_ROS(Node):
             self.rnn_reward_buffer.clear()
             self.rnn_action_buffer.clear()
             self.rnn_new_error_buffer.clear()
+            self.rnn_actor_hidden_buffer.clear()
             reward = 0
         else:
             #get the states before update so this is our previous state.
@@ -192,14 +198,16 @@ class SAC_RNN_ROS(Node):
             # print(len(rnn_prev_actions))
             if(len(self.rnn_action_buffer)==self.window_size):   
 
-                action = self.model.select_action(obs_seq)
+                action, hidden_state = self.model.select_action(obs_seq)
                 #take the last one from the network
                 action = action[:, -1, :]  # Shape: (batch_size, state_dim)
                 action = action.detach().squeeze()
                 self.current_action = action
-                # print(f"rnn_action: {len(rnn_prev_actions)}")
+                # print(f"hidden: {hidden_state.shape}")
+                # print(type(rnn_prev_actor_hidden))
+                # print(f"rnn_action: {len(rnn_prev_actor_hidden)}")
                 self.model.replay_buffer.add(rnn_prev_obs, rnn_prev_actions, 
-                                                self.rnn_reward_buffer, self.rnn_new_obs_buffer)
+                                                self.rnn_reward_buffer, self.rnn_new_obs_buffer, hidden_state)
                 self.total_reward  = self.total_reward + reward
 
                 #do training if there are enough data in the replay buffer

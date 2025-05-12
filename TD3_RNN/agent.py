@@ -48,7 +48,9 @@ class TD3Agent:
         self.critic1_optimizer = torch.optim.Adam(self.critic1.parameters(), lr=critic_lr)
         self.critic2_optimizer = torch.optim.Adam(self.critic2.parameters(), lr=critic_lr)
 
-
+        self.actor_hidden = None
+        self.critic1_hidden = None
+        self.critic2_hidden = None
 
     def select_action(self, obs_seq, noise=True):
         # Select action using the actor network (add exploration noise)
@@ -58,7 +60,7 @@ class TD3Agent:
         # ha = self.actor.init_hidden(B)
         # obs_seq = obs_seq.to(self.device).float()
 
-        action = self.actor(obs_seq, None)
+        action, self.actor_hidden = self.actor(obs_seq, self.actor_hidden)
         # action = action[:, -1, :]  # Shape: (batch_size, state_dim)
         # action = action.detach().squeeze()
         # print(action.shape)
@@ -73,30 +75,25 @@ class TD3Agent:
 
         # Clip actions to valid range
         action = torch.clamp(action, -self.max_action, self.max_action)
-        return action
+        return action, self.actor_hidden
 
     def update(self, batch_size):
-        obs_seq, action_seq, reward_seq, next_obs_seq = self.replay_buffer.sample(batch_size)
+        obs_seq, action_seq, reward_seq, next_obs_seq, actor_hidden_seq = self.replay_buffer.sample(batch_size)
         B, T, _ = obs_seq.shape
 
         # Move to device
         obs_seq = obs_seq.to(self.device)
         action_seq = action_seq.to(self.device)
-        # print(action_seq.shape)
-        # action_seq = action_seq.squeeze(2)
-
         reward_seq = reward_seq.to(self.device)
         next_obs_seq = next_obs_seq.to(self.device)
+        actor_hidden_seq = actor_hidden_seq.to(self.device)
+        
+        critic1_hidden = self.critic1_hidden if self.critic1_hidden is not None else torch.zeros(2, B, self.critic1.hidden_size).to(self.device)
+        critic2_hidden = self.critic2_hidden if self.critic2_hidden is not None else torch.zeros(2, B, self.critic2.hidden_size).to(self.device)
 
-        # Init hidden states
-        # h1 = self.critic1.init_hidden(B)
-        # h2 = self.critic2.init_hidden(B)
-        # th1 = self.target_critic1.init_hidden(B)
-        # th2 = self.target_critic2.init_hidden(B)
-        # ha = self.actor.init_hidden(B)
 
         with torch.no_grad():
-            next_action = self.actor(next_obs_seq)
+            next_action,_ = self.actor(next_obs_seq, actor_hidden_seq)
             # next_action = n_action[:, -1, :]  # Shape: (batch_size, state_dim)
             # next_action = next_action.detach().squeeze()
 
@@ -112,8 +109,8 @@ class TD3Agent:
 
             critic_states = torch.cat([next_obs_seq, next_action], dim=-1)
 
-            target_q1 = self.target_critic1(critic_states)
-            target_q2 = self.target_critic2(critic_states)
+            target_q1, critic1_hidden = self.target_critic1(critic_states, critic1_hidden)
+            target_q2, critic2_hidden = self.target_critic2(critic_states, critic2_hidden)
 
             target_q1 = target_q1[:, -1, :]  # Shape: (batch_size, state_dim)
             # target_q1 = target_q1.detach().squeeze()
@@ -125,8 +122,9 @@ class TD3Agent:
 
         # Critic losses
         critic_states = torch.cat([obs_seq, action_seq], dim=-1)
-        q1 = self.critic1(critic_states)
-        q2 = self.critic2(critic_states)
+        q1, critic1_hidden = self.critic1(critic_states, critic1_hidden)
+        q2, critic2_hidden = self.critic2(critic_states, critic2_hidden)
+
 
         q1 = q1[:, -1, :]  # Shape: (batch_size, state_dim)
         q2 = q2[:, -1, :]  # Shape: (batch_size, state_dim)
@@ -144,8 +142,8 @@ class TD3Agent:
             # torch.autograd.set_detect_anomaly(True)
             critic1_loss.backward()
             self.critic1_optimizer.step()
-        else:
-            critic1_loss = torch.tensor(0.0, device=self.device)
+        # else:
+            # critic1_loss = torch.tensor(0.0, device=self.device)
 
         if critic2_loss < self.max_loss:
             # print("check point")
@@ -154,8 +152,8 @@ class TD3Agent:
             critic2_loss.backward()
             self.critic2_optimizer.step()
             # print("check point2")
-        else:
-            critic2_loss = torch.tensor(0.0, device=self.device)
+        # else:
+            # critic2_loss = torch.tensor(0.0, device=self.device)
         # Actor loss: minimize the negative Q-value (maximize Q-value)
         actor_loss = torch.tensor(0.0)  # Default value if not updated
         self.total_it += 1
@@ -163,21 +161,19 @@ class TD3Agent:
         if self.total_it % self.policy_delay == 0:
             # Actor loss (maximize Q from critic1)
 
-            actor_action = self.actor(obs_seq)
+            actor_action, _ = self.actor(obs_seq, actor_hidden_seq)
             # action_seq[:, -1] = actor_action[:, -1, :].detach().squeeze()
-
-            actor_action[:, :-1, :] = action_seq[:, 1:, :] #plug existing action seq except the first one into actor
+            # actor_action[:, :-1, :] = action_seq[:, 1:, :] #plug existing action seq except the first one into actor
+            actor_action = torch.cat([action_seq[:, 1:, :], actor_action[:, -1, :].unsqueeze(1)], dim=1)
 
             critic_states = torch.cat([obs_seq, actor_action], dim=-1)
 
-            q = self.critic1(critic_states)
-
+            q,_ = self.critic1(critic_states, self.critic1_hidden)
             q = q[:, -1, :]  # Shape: (batch_size, state_dim)
 
             actor_loss = - q.mean()
             
             self.actor_optimizer.zero_grad()
-            # torch.autograd.set_detect_anomaly(True)
             actor_loss.backward()
             self.actor_optimizer.step()
 
@@ -185,11 +181,11 @@ class TD3Agent:
             for target_param, param in zip(self.target_actor.parameters(), self.actor.parameters()):
                 target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-        for target_param, param in zip(self.target_critic1.parameters(), self.critic1.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+            for target_param, param in zip(self.target_critic1.parameters(), self.critic1.parameters()):
+                target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-        for target_param, param in zip(self.target_critic2.parameters(), self.critic2.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+            for target_param, param in zip(self.target_critic2.parameters(), self.critic2.parameters()):
+                target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
         return critic1_loss.item(), critic2_loss.item(), actor_loss.item()
         
