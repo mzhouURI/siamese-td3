@@ -45,7 +45,7 @@ class SAC_RNN_ROS(Node):
         
         self.set_point_update_flag = False
         state = {
-            'z': {0},
+            # 'z': {0},
             'euler': (0,0,0), # Quaternion (x, y, z, w)
             'uvw': (0,0,0),
             'pqr': (0,0,0),
@@ -64,6 +64,7 @@ class SAC_RNN_ROS(Node):
 
         self.rnn_obs_buffer = collections.deque(maxlen=self.window_size)
         self.rnn_new_obs_buffer = collections.deque(maxlen=self.window_size)
+        self.rnn_new_error_buffer = collections.deque(maxlen= self.window_size)
         self.rnn_action_buffer = collections.deque(maxlen=self.window_size)
         self.rnn_reward_buffer = collections.deque(maxlen=self.window_size)
 
@@ -79,7 +80,7 @@ class SAC_RNN_ROS(Node):
                                 )
         self.total_reward = 0
 
-        self.timer_setpoint_update = self.create_timer(30, self.set_point_update)
+        self.timer_setpoint_update = self.create_timer(60, self.set_point_update)
         self.timer_setpoint_pub = self.create_timer(1.0, self.set_point_publish)
         self.timer_pub = self.create_timer(0.1, self.step)
 
@@ -132,7 +133,7 @@ class SAC_RNN_ROS(Node):
     def state_callback(self, msg):
 
         state = {
-            'z': {msg.position.z},
+            # 'z': {msg.position.z},
             'euler': (msg.orientation.x, msg.orientation.y, msg.orientation.z), 
             'uvw': (msg.velocity.x, msg.velocity.y, msg.velocity.z),
             'pqr': {msg.angular_rate.x, msg.angular_rate.y, msg.angular_rate.z}
@@ -159,6 +160,7 @@ class SAC_RNN_ROS(Node):
             self.rnn_new_obs_buffer.clear()
             self.rnn_reward_buffer.clear()
             self.rnn_action_buffer.clear()
+            self.rnn_new_error_buffer.clear()
             reward = 0
         else:
             #get the states before update so this is our previous state.
@@ -166,12 +168,13 @@ class SAC_RNN_ROS(Node):
             # get new states
             new_state = torch.tensor(np.concatenate([self.state, self.error_state]), dtype=torch.float32)
             self.rnn_new_obs_buffer.append(new_state)
-
+            
             # get new error state for computing reward
             new_error_state = torch.tensor(self.error_state, dtype=torch.float32).unsqueeze(0)  
+            self.rnn_new_error_buffer.append(new_error_state)
 
             #calculate reward from previous action
-            reward = self.calculate_reward(new_error_state)
+            reward = self.calculate_reward(new_error_state, self.rnn_new_error_buffer)
             reward = reward.detach().float().unsqueeze(0)
             self.rnn_reward_buffer.append(reward)
 
@@ -216,8 +219,10 @@ class SAC_RNN_ROS(Node):
         # except Exception as e:
         #     self.get_logger().error(f"Error in step(): {e}")
 
-    def calculate_reward(self, new_error_pose):
+    def calculate_reward(self, new_error_pose, new_error_pose_seq):
         new_error = new_error_pose.view(-1, 1)
+        new_error_pose_seq = list(new_error_pose_seq)           # Convert deque to list
+        new_error_pose_seq = torch.stack(new_error_pose_seq) 
 
         # Define a weight matrix W: shape [3, 3]
         w_z = 0.3
@@ -229,15 +234,30 @@ class SAC_RNN_ROS(Node):
         W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32)
         error_reward = torch.sum(abs(new_error) * W )
 
+
+        w_z = 0.25
+        w_pitch = 0.25
+        w_yaw = 0.25
+        w_u = 0.25
+
+        W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32, device = new_error_pose.device)
+        # sum all the error and calcualte the mean
+        new_error_pose_seq =  torch.sum(new_error_pose_seq, dim=0)
+        # print(histo_error)
+        accum_error = torch.sum(abs(new_error_pose_seq) * W )
+
+
         bonus = 0
         if abs(new_error[0])<0.1 and abs(new_error[1])<0.05 and abs(new_error[2])<0.05 and abs(new_error[3])<0.01:
             bonus = 200
             # print("bonus")
 
         error_reward = -10*error_reward
-        reward = error_reward + bonus
-        # print(f"error_reward: {reward: .4f}",
-        #       f"bonus: {bonus: .4f}")
+        accum_error_reward = - 2*accum_error
+        reward = error_reward + bonus + accum_error_reward
+        print(f"error_reward: {reward: .4f}",
+              f"accu_reward: {accum_error_reward: .4f}",
+              f"bonus: {bonus: .4f}")
 
         return reward
 

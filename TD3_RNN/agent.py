@@ -15,7 +15,7 @@ class TD3Agent:
         obs_dim, action_dim, hidden_size=256, rnn_layer = 1, seq_len = 10,
         actor_ckpt = None, actor_lr=3e-4, critic_lr=3e-4,
         tau=0.005, gamma=0.99, noise_std = 0.2, policy_delay =2,
-        device='cpu',max_action = 1):
+        device='cpu',max_action = 1, max_loss = 500):
 
         # Hyperparameters
         self.tau = tau
@@ -26,6 +26,7 @@ class TD3Agent:
         self.max_action = max_action
         self.device = device
         self.total_it = 0
+        self.max_loss = max_loss
 
         self.actor = RNNActor(obs_dim, action_dim, hidden_size, rnn_layer).to(device)
 
@@ -138,18 +139,23 @@ class TD3Agent:
             f"Average TQ: {target_q.mean().item():.4f}",
             f"reward: {reward_seq.mean().item():.4f}")
 
-        self.critic1_optimizer.zero_grad()
-        # torch.autograd.set_detect_anomaly(True)
-        critic1_loss.backward()
-        self.critic1_optimizer.step()
-        
-        # print("check point")
-        self.critic2_optimizer.zero_grad()
-        # torch.autograd.set_detect_anomaly(True)
-        critic2_loss.backward()
-        self.critic2_optimizer.step()
-        # print("check point2")
+        if critic1_loss < self.max_loss:
+            self.critic1_optimizer.zero_grad()
+            # torch.autograd.set_detect_anomaly(True)
+            critic1_loss.backward()
+            self.critic1_optimizer.step()
+        else:
+            critic1_loss = torch.tensor(0.0, device=self.device)
 
+        if critic2_loss < self.max_loss:
+            # print("check point")
+            self.critic2_optimizer.zero_grad()
+            # torch.autograd.set_detect_anomaly(True)
+            critic2_loss.backward()
+            self.critic2_optimizer.step()
+            # print("check point2")
+        else:
+            critic2_loss = torch.tensor(0.0, device=self.device)
         # Actor loss: minimize the negative Q-value (maximize Q-value)
         actor_loss = torch.tensor(0.0)  # Default value if not updated
         self.total_it += 1

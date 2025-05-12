@@ -25,7 +25,7 @@ data = np.loadtxt('offline_data/filename1.csv', delimiter=',')
 #16:18: roll, pitch, yaw, 
 #19:24 u,v,w,p,q,r
 error_states = data[:-1, [3,5,6,7]]
-states = data[:-1, 15:25]
+states = data[:-1, 16:25]
 # prev_actions = data[:-1,-4:]
 states = np.concatenate([states, error_states], axis=1)
 # states = data[:, [ 17, 18, 19, 21, 24]] 
@@ -61,7 +61,7 @@ training_data = np.hstack((states, actions))
 ep_loss = []
 seq_len = 20       # sequence length for transformer
 batch_size = 64    # number of sequences per batch
-num_epochs = 100    # how many passes over the dataset
+num_epochs = 40    # how many passes over the dataset
 
 
 
