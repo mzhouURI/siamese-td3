@@ -79,7 +79,7 @@ class SAC_RNN_ROS(Node):
                                 )
         self.total_reward = 0
 
-        self.timer_setpoint_update = self.create_timer(60, self.set_point_update)
+        self.timer_setpoint_update = self.create_timer(30, self.set_point_update)
         self.timer_setpoint_pub = self.create_timer(1.0, self.set_point_publish)
         self.timer_pub = self.create_timer(0.1, self.step)
 
@@ -186,6 +186,7 @@ class SAC_RNN_ROS(Node):
             obs_seq = obs_seq.to(self.device)
 
             # add to buffer when the rnn sequence buffer is filled
+            # print(len(rnn_prev_actions))
             if(len(self.rnn_action_buffer)==self.window_size):   
 
                 action = self.model.select_action(obs_seq)
@@ -193,17 +194,18 @@ class SAC_RNN_ROS(Node):
                 action = action[:, -1, :]  # Shape: (batch_size, state_dim)
                 action = action.detach().squeeze()
                 self.current_action = action
-
+                # print(f"rnn_action: {len(rnn_prev_actions)}")
                 self.model.replay_buffer.add(rnn_prev_obs, rnn_prev_actions, 
                                                 self.rnn_reward_buffer, self.rnn_new_obs_buffer)
                 self.total_reward  = self.total_reward + reward
 
-            #do training if there are enough data in the replay buffer
-            if len(self.model.replay_buffer.buffer) > self.batch_warmup_size:  # Start training after enough experiences
-                c1_loss, c2_loss, actor_loss = self.model.update(batch_size=self.batch_size)
-                msg = Float64MultiArray()
-                msg.data = [float(c1_loss), float(c2_loss), float(actor_loss)]
-                self.loss_pub.publish(msg)
+                #do training if there are enough data in the replay buffer
+                if len(self.model.replay_buffer.buffer) > self.batch_warmup_size:  # Start training after enough experiences
+                    # print(f"buffer size: {len(self.model.replay_buffer.buffer)}")
+                    c1_loss, c2_loss, actor_loss = self.model.update(batch_size=self.batch_size)
+                    msg = Float64MultiArray()
+                    msg.data = [float(c1_loss), float(c2_loss), float(actor_loss)]
+                    self.loss_pub.publish(msg)
 
 
             self.rnn_action_buffer.append(self.current_action)

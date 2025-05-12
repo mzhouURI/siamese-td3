@@ -75,13 +75,14 @@ class TD3Agent:
         return action
 
     def update(self, batch_size):
-        obs_seq, action_seq, reward_seq, next_obs_seq, _ = self.replay_buffer.sample(batch_size)
+        obs_seq, action_seq, reward_seq, next_obs_seq = self.replay_buffer.sample(batch_size)
         B, T, _ = obs_seq.shape
 
         # Move to device
         obs_seq = obs_seq.to(self.device)
         action_seq = action_seq.to(self.device)
-        action_seq = action_seq.squeeze(2)
+        # print(action_seq.shape)
+        # action_seq = action_seq.squeeze(2)
 
         reward_seq = reward_seq.to(self.device)
         next_obs_seq = next_obs_seq.to(self.device)

@@ -72,12 +72,19 @@ class RNNReplayBuffer:
         self.device = device
         self.buffer = deque(maxlen=buffer_size)
 
-    def add(self, obs_seq, action_seq, reward_seq, next_obs_seq, hidden_state_seq=None):
+    def add(self, obs_seq, action_seq, reward_seq, next_obs_seq):
         """
         Add a sequence of transitions to the buffer.
         All inputs should be torch tensors of shape (seq_len, dim).
         """
-        experience = (obs_seq, action_seq, reward_seq, next_obs_seq, hidden_state_seq)
+        # if any(len(seq) == 0 for seq in (obs_seq, action_seq, reward_seq, next_obs_seq)):
+        #     print("Warning: One or more input sequences are empty. Skipping.")
+        #     exit()
+        # print(action_seq)
+        # exit()
+        # return  # or raise an exception if preferred
+        experience = (obs_seq, action_seq, reward_seq, next_obs_seq)
+ 
         self.buffer.append(experience)
 
     def sample(self, batch_size):
@@ -88,12 +95,14 @@ class RNNReplayBuffer:
         action_seq_batch = []
         reward_seq_batch = []
         next_obs_seq_batch = []
-        hidden_state_seq_batch = []
+        # hidden_state_seq_batch = []
 
         for experience in batch:
-            obs_seq, action_seq, reward_seq, next_obs_seq, hidden_state_seq = experience
+            obs_seq, action_seq, reward_seq, next_obs_seq = experience
 
             obs_seq = torch.stack(list(obs_seq))  # Ensure proper dtype
+            # print(f"action seq: {len(action_seq)}")
+            
             action_seq = torch.stack(list(action_seq))
             reward_seq = torch.stack(list(reward_seq))
             next_obs_seq = torch.stack(list(next_obs_seq))
@@ -103,7 +112,7 @@ class RNNReplayBuffer:
             action_seq_batch.append(action_seq)
             reward_seq_batch.append(reward_seq)
             next_obs_seq_batch.append(next_obs_seq)
-            hidden_state_seq_batch.append(torch.zeros(1))  # Placeholder if needed
+            # hidden_state_seq_batch.append(torch.zeros(1))  # Placeholder if needed
 
         # Stack and move to device
         obs_seq_batch = torch.stack(obs_seq_batch).to(self.device)             # (B, T, obs_dim)
@@ -111,4 +120,4 @@ class RNNReplayBuffer:
         reward_seq_batch = torch.stack(reward_seq_batch).to(self.device)       # (B, T, 1)
         next_obs_seq_batch = torch.stack(next_obs_seq_batch).to(self.device)   # (B, T, obs_dim)
 
-        return obs_seq_batch, action_seq_batch, reward_seq_batch, next_obs_seq_batch, None
+        return obs_seq_batch, action_seq_batch, reward_seq_batch, next_obs_seq_batch
