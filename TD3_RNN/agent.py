@@ -158,13 +158,7 @@ class TD3Agent:
         # critic2_loss = nn.MSELoss()(q2, target_q)
         # print(q1.shape)
         # exit()
-        print(f"Average Q1: {q1.mean().item():.4f}",
-            f"STD Q1: {q1.std().item():.4f}",
-            f"Average Q2: {q2.mean().item():.4f}",
-            f"STD Q2: {q2.std().item():.4f}",
-            f"Average TQ: {target_q.mean().item():.4f}",
-            f"STD TQ: {target_q.std().item():.4f}",
-            f"reward: {reward_seq.mean().item():.4f}")
+       
 
         # if critic1_loss < self.max_loss:
         self.critic1_optimizer.zero_grad()
@@ -175,6 +169,13 @@ class TD3Agent:
         self.critic1_optimizer.step()
         self.critic2_optimizer.step()
 
+        print(f"Average Q1: {q1.mean().item():.4f}",
+            f"STD Q1: {q1.std().item():.4f}",
+            f"Average Q2: {q2.mean().item():.4f}",
+            f"STD Q2: {q2.std().item():.4f}",
+            f"Average TQ: {target_q.mean().item():.4f}",
+            f"STD TQ: {target_q.std().item():.4f}",
+            f"reward: {reward_seq.mean().item():.4f}")
         # Actor loss: minimize the negative Q-value (maximize Q-value)
         actor_loss = torch.tensor(0.0)  # Default value if not updated
         self.total_it += 1
