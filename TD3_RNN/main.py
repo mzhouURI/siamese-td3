@@ -72,15 +72,18 @@ class SAC_RNN_ROS(Node):
         self.c1_loss = collections.deque(maxlen=loss_average_window)
         self.c2_loss = collections.deque(maxlen=loss_average_window)
 
+        integral_window = 100
+        self.integral_error = collections.deque(maxlen=integral_window)
+
         self.current_action = torch.zeros(4, 1)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = TD3Agent(obs_dim = len(self.state) + len(self.error_state), action_dim = 4,
                                 seq_len = self.window_size,
                                 device = self.device,
-                                hidden_size = 128, rnn_layer = 2,
+                                hidden_size = 512, rnn_layer = 3,
                                 actor_ckpt = 'actor_rnn.pth',
-                                actor_lr = 1e-7, critic_lr= 1e-3,  tau = 0.001, noise_std= 0.1, policy_delay=10
+                                actor_lr = 1e-6, critic_lr= 1e-4,  tau = 0.005, noise_std= 0.1, policy_delay=5
                                 )
         self.total_reward = 0
 
@@ -165,77 +168,100 @@ class SAC_RNN_ROS(Node):
             self.rnn_reward_buffer.clear()
             self.rnn_action_buffer.clear()
             self.rnn_new_error_buffer.clear()
+            self.actor_hidden = self.model.actor.init_hidden(1)
+            self.integral_error.clear()
             reward = 0
-        else:
-            #get the states before update so this is our previous state.
-            rnn_prev_obs = self.rnn_new_obs_buffer
-            # get new states
-            new_state = torch.tensor(np.concatenate([self.state, self.error_state]), dtype=torch.float32)
-            self.rnn_new_obs_buffer.append(new_state)
-            
-            # get new error state for computing reward
-            new_error_state = torch.tensor(self.error_state, dtype=torch.float32).unsqueeze(0)  
-            self.rnn_new_error_buffer.append(new_error_state)
+        # else:
+        # print(len(self.rnn_action_buffer))
+        #get the states before update so this is our previous state.
+        rnn_prev_obs = self.rnn_new_obs_buffer
+        # get new states
+        new_state = torch.tensor(np.concatenate([self.state, self.error_state]), dtype=torch.float32)
+        self.rnn_new_obs_buffer.append(new_state)
+        
+        # get new error state for computing reward
+        new_error_state = torch.tensor(self.error_state, dtype=torch.float32).unsqueeze(0)  
+        self.rnn_new_error_buffer.append(new_error_state)
 
-            #calculate reward from previous action
-            reward = self.calculate_reward(new_error_state, self.rnn_new_error_buffer)
-            reward = reward.detach().float().unsqueeze(0)
-            self.rnn_reward_buffer.append(reward)
 
-            #take new action                
-            #store the old action seq first
-            rnn_prev_actions = self.rnn_action_buffer
-            #take new action
-            # hidden = self.model.actor.init_hidden(self.batch_size)
-            obs_seq = torch.stack(list(self.rnn_new_obs_buffer), dim=0)
-            # Add batch dimension: shape (1, T, obs_dim)
-            obs_seq = obs_seq.unsqueeze(0)
-            obs_seq = obs_seq.to(self.device)
+        self.integral_error.append(new_error_state)
 
-            # add to buffer when the rnn sequence buffer is filled
-            # print(len(rnn_prev_actions))
-            if(len(self.rnn_action_buffer)==self.window_size):   
+        #calculate reward from previous action
+        reward = self.calculate_reward(new_error_state, self.integral_error)
+        reward = reward.detach().float().unsqueeze(0)
+        self.rnn_reward_buffer.append(reward)
 
-                action, self.actor_hidden = self.model.select_action(obs_seq, hidden = self.actor_hidden)
-                # print(self.actor_hidden.shape)
-                #take the last one from the network
-                action = action[:, -1, :]  # Shape: (batch_size, state_dim)
-                action = action.detach().squeeze()
-                self.current_action = action
-                # print(f"rnn_action: {len(rnn_prev_actions)}")
+        #take new action                
+        #store the old action seq first
+        rnn_prev_actions = self.rnn_action_buffer
+        #take new action
+        # hidden = self.model.actor.init_hidden(self.batch_size)
+        obs_seq = torch.stack(list(self.rnn_new_obs_buffer), dim=0)
+        # Add batch dimension: shape (1, T, obs_dim)
+        obs_seq = obs_seq.unsqueeze(0)
+        obs_seq = obs_seq.to(self.device)
+        # action = torch.rand(4,1)
+        # add to buffer when the rnn sequence buffer is filled
+        # print(len(rnn_prev_actions))
+        if(len(self.rnn_action_buffer)==self.window_size):   
+
+            action, self.actor_hidden = self.model.select_action(obs_seq, hidden = self.actor_hidden)
+            # print(self.actor_hidden.shape)
+            #take the last one from the network
+            action = action[:, -1, :]  # Shape: (batch_size, state_dim)
+            action = action.detach().squeeze()
+            self.current_action = action
+            # print(f"rnn_action: {len(rnn_prev_actions)}")
+
+            #quality control
+            # Ensure all tensors are on the same device
+            device = rnn_prev_actions[0].device  # Get the device of the first tensor
+
+            all_same = all(torch.equal(a.to(device), rnn_prev_actions[0].to(device)) for a in rnn_prev_actions)
+
+            tensor_buffer = torch.stack(list(self.rnn_new_error_buffer))  # Stack the deque into a tensor
+            # Now perform the slicing operation
+            diffs = torch.norm(tensor_buffer[1:] - tensor_buffer[:-1], dim=1)  # L2 norm per step
+
+            max_change = diffs.max().item()
+            if not all_same and max_change < 1:
                 self.model.replay_buffer.add(rnn_prev_obs, rnn_prev_actions, 
                                                 self.rnn_reward_buffer, self.rnn_new_obs_buffer)
-                self.total_reward  = self.total_reward + reward
+            else:
+                print("bad data dropped")
+            self.total_reward  = self.total_reward + reward
 
-                #do training if there are enough data in the replay buffer
-                if len(self.model.replay_buffer.buffer) > self.batch_warmup_size:  # Start training after enough experiences
-                    # print(f"buffer size: {len(self.model.replay_buffer.buffer)}")
-                    c1_loss, c2_loss, actor_loss = self.model.update(batch_size=self.batch_size)
-                    self.c1_loss.append(c1_loss)
-                    self.c2_loss.append(c2_loss)
+            #do training if there are enough data in the replay buffer
+            if len(self.model.replay_buffer.buffer) > self.batch_warmup_size:  # Start training after enough experiences
+                # print(f"buffer size: {len(self.model.replay_buffer.buffer)}")
+                c1_loss, c2_loss, actor_loss = self.model.update(batch_size=self.batch_size)
+                # self.c1_loss.append(c1_loss)
+                # self.c2_loss.append(c2_loss)
 
-                    msg = Float64MultiArray()
-                    msg.data = [float(np.mean(self.c1_loss)), float(np.mean(self.c2_loss)), float(actor_loss)]
-                    self.loss_pub.publish(msg)
+                msg = Float64MultiArray()
+                msg.data = [float(c1_loss), float(c2_loss), float(actor_loss)]
+                self.loss_pub.publish(msg)
 
 
-            self.rnn_action_buffer.append(self.current_action)
-            #publish action
-            msg = Float64MultiArray()
-            msg.data = self.current_action.detach().cpu().numpy().flatten().tolist()                   
-            self.thruster_pub.publish(msg)
+        self.rnn_action_buffer.append(self.current_action)
+        #publish action
+        msg = Float64MultiArray()
+        msg.data = self.current_action.detach().cpu().numpy().flatten().tolist()                   
+        self.thruster_pub.publish(msg)
         # except Exception as e:
         #     self.get_logger().error(f"Error in step(): {e}")
 
     def calculate_reward(self, new_error_pose, new_error_pose_seq):
         new_error = new_error_pose.view(-1, 1)
+        integral_len = len(new_error_pose_seq)
         new_error_pose_seq = list(new_error_pose_seq)           # Convert deque to list
         new_error_pose_seq = torch.stack(new_error_pose_seq) 
+        # print(new_error_pose_seq.shape)
 
         # Define a weight matrix W: shape [3, 3]
         w_z = 0.3
-        w_pitch = 0.1
-        w_yaw = 0.2
+        w_pitch = 0.15
+        w_yaw = 0.15
         w_u = 0.4
         
         # Creat diagonal weight matrix W
@@ -243,29 +269,41 @@ class SAC_RNN_ROS(Node):
         error_reward = torch.sum(abs(new_error) * W )
 
 
-        w_z = 0.25
-        w_pitch = 0.25
-        w_yaw = 0.25
-        w_u = 0.25
+        w_z = 0.5
+        w_pitch = 0.1
+        w_yaw = 0.1
+        w_u = 0.3
 
         W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32, device = new_error_pose.device)
         # sum all the error and calcualte the mean
-        new_error_pose_seq =  torch.sum(new_error_pose_seq, dim=0)
+        integral_sum =  torch.sum(new_error_pose_seq, dim=0)
         # print(histo_error)
-        accum_error = torch.sum(abs(new_error_pose_seq) * W )
+        accum_error = torch.sum(abs(integral_sum) * W )
 
 
+        ##delta error
+        tensor_buffer = torch.stack(list(new_error_pose_seq))  # Stack the deque into a tensor
+        # print(tensor_buffer.shape)
+        # print(tensor_buffer[:,-1])
+        # Now perform the slicing operation
+        if integral_len>1:
+            error_rate = abs(tensor_buffer[-1]) - abs(tensor_buffer[-2])
+            # print(error_rate)
+            error_rate_reward = 1000*torch.sum(error_rate *W)
+        else:
+            error_rate_reward = 0
+                           
         bonus = 0
         if abs(new_error[0])<0.1 and abs(new_error[1])<0.05 and abs(new_error[2])<0.05 and abs(new_error[3])<0.01:
             bonus = 200
             # print("bonus")
 
-        error_reward = -10*error_reward
-        accum_error_reward = - 2*accum_error
-        reward = error_reward + bonus + accum_error_reward
-        # print(f"error_reward: {reward: .4f}",
-        #       f"accu_reward: {accum_error_reward: .4f}",
-        #       f"bonus: {bonus: .4f}")
+        error_reward = -100*error_reward
+        accum_error_reward = - 1*accum_error
+        reward = error_reward + 1*bonus + accum_error_reward - error_rate_reward
+        print(f"error_reward: {error_reward: .4f}",
+              f"accu_reward: {accum_error_reward: .4f}",
+              f"error_rate_reward: {error_rate_reward: .4f}")
 
         return reward
 

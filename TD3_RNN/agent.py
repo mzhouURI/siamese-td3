@@ -86,6 +86,7 @@ class TD3Agent:
         return action, hidden
 
     def update(self, batch_size):
+        # print(len(self.replay_buffer.buffer))
         obs_seq, action_seq, reward_seq, next_obs_seq = self.replay_buffer.sample(batch_size)
         B, T, _ = obs_seq.shape
 
@@ -144,28 +145,28 @@ class TD3Agent:
         critic1_loss = nn.MSELoss()(q1, target_q)
         critic2_loss = nn.MSELoss()(q2, target_q)
 
-        print(f"Average Q1: {q1.mean().item():.4f}",
-            f"Average Q2: {q2.mean().item():.4f}",
-            f"Average TQ: {target_q.mean().item():.4f}",
-            f"reward: {reward_seq.mean().item():.4f}")
+        # print(f"Average Q1: {q1.mean().item():.4f}",
+        #     f"Average Q2: {q2.mean().item():.4f}",
+        #     f"Average TQ: {target_q.mean().item():.4f}",
+        #     f"reward: {reward_seq.mean().item():.4f}")
 
-        if critic1_loss < self.max_loss:
-            self.critic1_optimizer.zero_grad()
-            # torch.autograd.set_detect_anomaly(True)
-            critic1_loss.backward()
-            self.critic1_optimizer.step()
-        else:
-            critic1_loss = torch.tensor(0.0, device=self.device)
+        # if critic1_loss < self.max_loss:
+        self.critic1_optimizer.zero_grad()
+        # torch.autograd.set_detect_anomaly(True)
+        critic1_loss.backward()
+        self.critic1_optimizer.step()
+        # else:
+            # critic1_loss = torch.tensor(0.0, device=self.device)
 
-        if critic2_loss < self.max_loss:
-            # print("check point")
-            self.critic2_optimizer.zero_grad()
-            # torch.autograd.set_detect_anomaly(True)
-            critic2_loss.backward()
-            self.critic2_optimizer.step()
-            # print("check point2")
-        else:
-            critic2_loss = torch.tensor(0.0, device=self.device)
+        # if critic2_loss < self.max_loss:
+        # print("check point")
+        self.critic2_optimizer.zero_grad()
+        # torch.autograd.set_detect_anomaly(True)
+        critic2_loss.backward()
+        self.critic2_optimizer.step()
+        # print("check point2")
+        # else:
+            # critic2_loss = torch.tensor(0.0, device=self.device)
         # Actor loss: minimize the negative Q-value (maximize Q-value)
         actor_loss = torch.tensor(0.0)  # Default value if not updated
         self.total_it += 1

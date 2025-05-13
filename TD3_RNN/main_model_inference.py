@@ -1,6 +1,6 @@
 import time
 import numpy as np
-from actor import ActorTransformer
+from networks import RNNActor
 import rclpy
 from rclpy.node import Node
 from mvp_msgs.msg import ControlProcess
@@ -21,7 +21,6 @@ class ActorROS(Node):
         self.subscription2 = self.create_subscription(ControlProcess, '/mvp2_test_robot/controller/process/error', self.state_error_callback, 1)
         self.subscription3 = self.create_subscription(Bool, '/mvp2_test_robot/controller/state', self.controller_state_callback, 1)
 
-        # self.set_point_pub = self.create_publisher(ControlProcess, '/mvp2_test_robot/controller/process/set_point', 3)
         self.thruster_pub = self.create_publisher(Float64MultiArray, '/mvp2_test_robot/stonefish/thruster_command', 5)
 
                  #initial set point
@@ -39,18 +38,11 @@ class ActorROS(Node):
 
         self.thrust_cmd = []
 
-        # state = {
-        #     'z': (0),
-        #     'euler': (0,0,0), # Quaternion (x, y, z, w)
-        #     'uvw': (0,0,0),
-        #     # 'uvw': (0),
-        #     'pqr': (0,0,0)
-        # }
         state = {
-             'z': (0),
-            'euler': (0,0), # Quaternion (x, y, z, w)
-            'u': (0, 0),
-            'pqr': (0)
+            # 'z': {0},
+            'euler': (0,0,0), # Quaternion (x, y, z, w)
+            'uvw': (0,0,0),
+            'pqr': (0,0,0),
         }
         error_state = {
              'z': (0),
@@ -60,50 +52,35 @@ class ActorROS(Node):
         self.state = self.flatten_state(state)
         self.error_state = self.flatten_state(error_state)
 
-        #setup model
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.device =device
-        print("Using device:", device)
 
-        self.model = ActorTransformer(state_dim = len(self.state), error_dim = len(self.error_state), 
-                                hidden_dim = 32, num_layers = 2,
-                                output_dim = 4).to(self.device)
+        self.window_size = 20
+        self.rnn_obs_buffer = collections.deque(maxlen=self.window_size)
 
+        self.current_action = torch.zeros(4, 1)
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.model = self.actor = RNNActor(obs_dim = len(self.state) + len(self.error_state), action_dim = 4, hidden_size = 512, rnn_layers = 3).to(self.device)
+        
         # self.model.load_state_dict(torch.load("actor_transformer.pth"))
-        self.model.load_state_dict(torch.load("model2/actor.pth"))
+        self.model.load_state_dict(torch.load("model/actor.pth"))
+        self.actor_hidden = self.model.init_hidden(1)
 
         self.model.eval()
 
-        #setup sequence buffer
-        self.window_size = 10
         # Buffer to store the last N actions and states
-        # self.action_buffer = collections.deque(maxlen=self.window_size)
-        self.state_buffer = collections.deque(maxlen=self.window_size)
-        self.error_state_buffer = collections.deque(maxlen=self.window_size)
         self.enabled = False
         #setup timer
-        self.timer_pub = self.create_timer(0.05, self.step)
-        # self.timer_setpoint_update = self.create_timer(60, self.set_point_update)
-        # self.timer_setpoint_pub = self.create_timer(1.0, self.set_point_publish)
-
-        # self.set_controller = self.create_client(SetBool, '/mvp2_test_robot/controller/set')  
-        # self.active_controller(True)
+        self.timer_pub = self.create_timer(0.1, self.step)
         
     def controller_state_callback(self, msg):
         self.enabled = msg.data
+        if not self.enabled:
+            action = torch.zeros(4, 1)
+            msg = Float64MultiArray()
+            msg.data = action.detach().cpu().numpy().flatten().tolist()                   
+            self.thruster_pub.publish(msg)
     
-    def set_point_update(self):    
-        #update setpoint
-        self.set_point.position.z = random.uniform(-5,-1)
-        self.set_point.orientation.z = random.uniform(-3.14, 3.14)
-        self.set_point.velocity.x = random.uniform(0.0, 0.5)
-    
-    def set_point_publish(self):
-        self.set_point_pub.publish(self.set_point)
-
-    def wrap_to_pi(self, angle):
-        """Wrap angle to [-pi, pi]."""
-        return (angle + np.pi) % (2 * np.pi) - np.pi
     
     def flatten_state(self, state_dict):
         def flatten_value(v):
@@ -122,23 +99,15 @@ class ActorROS(Node):
         return np.array(flat, dtype=np.float32)
 
     def state_callback(self, msg):
-
-        # state = {
-        #     'z': (msg.position.z),
-        #     'euler': (msg.orientation.x, msg.orientation.y, msg.orientation.z), 
-        #     'uvw': (msg.velocity.x, msg.velocity.y, msg.velocity.z),
-        #     'pqr': {msg.angular_rate.x, msg.angular_rate.y, msg.angular_rate.z}
-        # }
         state = {
-            'z': (msg.position.z),
-            'euler': (msg.orientation.y, msg.orientation.z),  
-            'u': (msg.velocity.x, msg.velocity.z),
-            'pqr': (msg.angular_rate.z)
+            # 'z': {msg.position.z},
+            'euler': (msg.orientation.x, msg.orientation.y, msg.orientation.z), 
+            'uvw': (msg.velocity.x, msg.velocity.y, msg.velocity.z),
+            'pqr': {msg.angular_rate.x, msg.angular_rate.y, msg.angular_rate.z}
         }
         self.state = self.flatten_state(state)
 
     def state_error_callback(self, msg):
-
         state_error = {
             'z': (msg.position.z),
             'euler': (msg.orientation.y, msg.orientation.z),  
@@ -151,33 +120,32 @@ class ActorROS(Node):
 
     def step(self):
         if self.enabled :
-            current_pose = torch.tensor(self.state, dtype=torch.float32).unsqueeze(0)
-            error_pose = torch.tensor(self.error_state, dtype=torch.float32).unsqueeze(0)
-
-            # Add current state and error to the buffers
-            self.state_buffer.append(current_pose)
-            self.error_state_buffer.append(error_pose)
+            new_state = torch.tensor(np.concatenate([self.state, self.error_state]), dtype=torch.float32)
+            self.rnn_obs_buffer.append(new_state)
             
-            # Create a sequence of actions (the buffer) for transformer inference
-            # The buffer will contain the most recent states and errors
-            context_states = torch.cat(list(self.state_buffer), dim=0).unsqueeze(0).to(self.device)
-            context_errors = torch.cat(list(self.error_state_buffer), dim=0).unsqueeze(0).to(self.device)
+            obs_seq = torch.stack(list(self.rnn_obs_buffer), dim=0)
+            # Add batch dimension: shape (1, T, obs_dim)
+            obs_seq = obs_seq.unsqueeze(0)
+            obs_seq = obs_seq.to(self.device)
             
             # Assuming the transformer model takes the sequence of past states and errors as input
             with torch.no_grad():
-                pred_thrust_cmd = self.model(context_states, context_errors)
-                print(pred_thrust_cmd)
+                action, self.actor_hidden = self.model(obs_seq, hidden = self.actor_hidden)
+                self.actor_hidden = tuple(h.detach() for h in self.actor_hidden)
+                action = action[:, -1, :]  # Shape: (batch_size, state_dim)
+                action = action.detach().squeeze()
+
+                print(action)
                 
                 # Convert predicted thrust commands to a message
                 msg = Float64MultiArray()
-                msg.data = pred_thrust_cmd.detach().cpu().numpy().flatten().tolist()
+                msg.data = action.detach().cpu().numpy().flatten().tolist()                   
                 self.thruster_pub.publish(msg)
 
 def main(args=None):
 
     rclpy.init(args=args)
     node = ActorROS()
-    node.set_point_update()
 
     try:
         rclpy.spin(node)  # This should keep the node alive and run timers and callbacks

@@ -44,7 +44,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
 model = RNNActor(obs_dim = state_dim, action_dim = action_dim,
-                 hidden_size = 128, rnn_layers = 2,
+                 hidden_size = 512, rnn_layers = 3,
                  ).to(device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, amsgrad = True)
@@ -79,7 +79,6 @@ for epoch in range(num_epochs):
 
         # Separate components
         # states_seq = batch[:, :-1, :state_dim]                             # (B, T, error_dim)
-        # exit()
         # actual_action = batch[:, -1, -action_dim:]                    # (B, action_dim)
         # print(batch.shape)
         states_seq = batch [:, : , :state_dim]
@@ -89,11 +88,7 @@ for epoch in range(num_epochs):
         rnn_action, _= model.forward(states_seq)  # Your model takes (state, error) as inputs
 
         # rnn_action = rnn_action[:, -1, :]  # Shape: (batch_size, state_dim)
-        # print(rnn_action)
-        # print(actual_action)
 
-        # exit()
-        # print(states_seq.shape)
 
         # exit()
         loss = loss_fn(rnn_action, actual_action)

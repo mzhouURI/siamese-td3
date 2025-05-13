@@ -89,7 +89,9 @@ class RNNReplayBuffer:
 
     def sample(self, batch_size):
         """Sample a batch of sequences."""
-        batch = random.sample(self.buffer, batch_size)
+        # batch = random.sample(self.buffer, batch_size)
+        indices = random.sample(range(len(self.buffer)), batch_size)
+        batch = [self.buffer[i] for i in indices]
 
         obs_seq_batch = []
         action_seq_batch = []
