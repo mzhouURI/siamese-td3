@@ -39,6 +39,11 @@ class TD3Agent:
         self.critic2 = RNNCritic(obs_dim+action_dim, hidden_size, rnn_layer).to(device)
         self.target_critic1 = copy.deepcopy(self.critic1)
         self.target_critic2 = copy.deepcopy(self.critic2)
+        self.critic1.init_weights()
+        self.critic2.init_weights()
+        self.target_critic1.init_weights()
+        self.target_critic2.init_weights()
+
 
         #replay buffer
         self.replay_buffer = RNNReplayBuffer(1000000, seq_len, obs_dim, action_dim)
@@ -112,6 +117,8 @@ class TD3Agent:
             # next_action = next_action.detach().squeeze()
 
             noise = torch.normal(0, self.noise_std, size=next_action.shape).to(self.device)
+            # noise = torch.normal(0, 0.0, size=next_action.shape).to(self.device)
+
             noise = noise.clamp(-0.5, 0.5)
             next_action = (next_action + noise).clamp(-self.max_action, self.max_action)
             
@@ -145,10 +152,10 @@ class TD3Agent:
         critic1_loss = nn.MSELoss()(q1, target_q)
         critic2_loss = nn.MSELoss()(q2, target_q)
 
-        # print(f"Average Q1: {q1.mean().item():.4f}",
-        #     f"Average Q2: {q2.mean().item():.4f}",
-        #     f"Average TQ: {target_q.mean().item():.4f}",
-        #     f"reward: {reward_seq.mean().item():.4f}")
+        print(f"Average Q1: {q1.mean().item():.4f}",
+            f"Average Q2: {q2.mean().item():.4f}",
+            f"Average TQ: {target_q.mean().item():.4f}",
+            f"reward: {reward_seq.mean().item():.4f}")
 
         # if critic1_loss < self.max_loss:
         self.critic1_optimizer.zero_grad()

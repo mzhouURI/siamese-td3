@@ -54,7 +54,7 @@ class TD3Agent:
         #initialize critic
         self.critic1 = CriticTransformer(state_dim = state_dim, error_dim = error_dim, action_dim = action_dim,
                                         hidden_dim = hidden_dim, num_layers = num_layers, seq_len=seq_len).to(device)
-                                         
+        self.critic1.init_weights()                             
         self.critic2 = CriticTransformer(state_dim = state_dim, error_dim = error_dim, action_dim = action_dim,
                                         hidden_dim = hidden_dim, num_layers = num_layers, seq_len=seq_len).to(device)
         

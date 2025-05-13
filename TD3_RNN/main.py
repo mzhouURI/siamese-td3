@@ -59,8 +59,8 @@ class SAC_RNN_ROS(Node):
         self.error_state = self.flatten_state(error_state)
         
         self.window_size = 20
-        self.batch_size = 64
-        self.batch_warmup_size =self.batch_size*1
+        self.batch_size = 128
+        self.batch_warmup_size =self.batch_size*5
 
         self.rnn_obs_buffer = collections.deque(maxlen=self.window_size)
         self.rnn_new_obs_buffer = collections.deque(maxlen=self.window_size)
@@ -83,7 +83,7 @@ class SAC_RNN_ROS(Node):
                                 device = self.device,
                                 hidden_size = 512, rnn_layer = 3,
                                 actor_ckpt = 'actor_rnn.pth',
-                                actor_lr = 1e-6, critic_lr= 1e-4,  tau = 0.005, noise_std= 0.1, policy_delay=5
+                                actor_lr = 1e-6, critic_lr= 1e-4,  tau = 0.005, noise_std= 0.1, policy_delay=2
                                 )
         self.total_reward = 0
 
@@ -298,12 +298,12 @@ class SAC_RNN_ROS(Node):
             bonus = 200
             # print("bonus")
 
-        error_reward = -100*error_reward
-        accum_error_reward = - 1*accum_error
+        error_reward = -50*error_reward
+        accum_error_reward = - 2*accum_error
         reward = error_reward + 1*bonus + accum_error_reward - error_rate_reward
-        print(f"error_reward: {error_reward: .4f}",
-              f"accu_reward: {accum_error_reward: .4f}",
-              f"error_rate_reward: {error_rate_reward: .4f}")
+        # print(f"error_reward: {error_reward: .4f}",
+        #       f"accu_reward: {accum_error_reward: .4f}",
+        #       f"error_rate_reward: {error_rate_reward: .4f}")
 
         return reward
 

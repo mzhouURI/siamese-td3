@@ -24,12 +24,12 @@ data = np.loadtxt('offline_data/filename1.csv', delimiter=',')
 #13-15: x,y,z,
 #16:18: roll, pitch, yaw, 
 #19:24 u,v,w,p,q,r
-error_states = data[:-1, [3,5,6,7]]
-states = data[:-1, 16:25]
+error_states = data[:, [3,5,6,7]]
+states = data[:, 16:25]
 # prev_actions = data[:-1,-4:]
 states = np.concatenate([states, error_states], axis=1)
 # states = data[:, [ 17, 18, 19, 21, 24]] 
-actions = data[1:, -4:]
+actions = data[:, -4:]
 
 state_dim = states.shape[1]
 action_dim = actions.shape[1]

@@ -3,6 +3,7 @@ import torch.nn as nn
 from collections import deque
 import random
 import torch.nn.functional as F
+import numpy as np
 
 class RNNActor(nn.Module):
     def __init__(self, obs_dim, action_dim, hidden_size=128, rnn_layers=1):
@@ -23,6 +24,28 @@ class RNNActor(nn.Module):
 
         return action, hidden
     
+    def init_weights(self):
+        seed = 42
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+        # Initialize LSTM weights
+        for name, param in self.rnn.named_parameters():
+            if 'weight_ih' in name:
+                nn.init.xavier_uniform_(param)
+            elif 'weight_hh' in name:
+                nn.init.orthogonal_(param)
+            elif 'bias' in name:
+                nn.init.zeros_(param)
+
+        # Initialize linear layer
+        nn.init.xavier_uniform_(self.fc.weight)
+        nn.init.zeros_(self.fc.bias)
+
 
     def init_hidden(self, batch_size):
         num_layers = self.rnn.num_layers
@@ -54,6 +77,28 @@ class RNNCritic(nn.Module):
         # q = q_values[:, -1, :].clone()  # Ensures it's not a view
 
         return q_values
+    
+    def init_weights(self):
+        seed = 42
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+        # Initialize LSTM weights
+        for name, param in self.rnn.named_parameters():
+            if 'weight_ih' in name:
+                nn.init.xavier_uniform_(param)
+            elif 'weight_hh' in name:
+                nn.init.orthogonal_(param)
+            elif 'bias' in name:
+                nn.init.zeros_(param)
+
+        # Initialize linear layer
+        nn.init.xavier_uniform_(self.q_head.weight)
+        nn.init.zeros_(self.q_head.bias)
 
     def init_hidden(self, batch_size):
         num_layers = self.rnn.num_layers
