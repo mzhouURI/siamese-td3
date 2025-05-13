@@ -13,7 +13,7 @@ from collections import deque
 class TD3Agent:
     def __init__(self,
         obs_dim, action_dim, hidden_size=256, rnn_layer = 1, seq_len = 10,
-        actor_ckpt = None, actor_lr=3e-4, critic_lr=3e-4,
+        actor_ckpt = None, critic_ckpt = None, actor_lr=3e-4, critic_lr=3e-4,
         tau=0.005, gamma=0.99, noise_std = 0.2, policy_delay =2,
         device='cpu',max_action = 1, max_loss = 500):
 
@@ -21,6 +21,7 @@ class TD3Agent:
         self.tau = tau
         self.gamma = gamma
         self.noise_std = noise_std
+        self.policy_smooth_noise = 0.1
         self.policy_delay = policy_delay
         self.total_timesteps = 0
         self.max_action = max_action
@@ -35,23 +36,29 @@ class TD3Agent:
             print(f"Loaded actor weights from {actor_ckpt}")
         self.target_actor = copy.deepcopy(self.actor)
 
+        
         self.critic1 = RNNCritic(obs_dim+action_dim, hidden_size, rnn_layer).to(device)
         self.critic2 = RNNCritic(obs_dim+action_dim, hidden_size, rnn_layer).to(device)
+        if critic_ckpt is not None:
+            self.critic1.load_state_dict(torch.load(critic_ckpt, map_location=device))
+            self.critic2.load_state_dict(torch.load(critic_ckpt, map_location=device))
+            print(f"Loaded actor weights from {critic_ckpt}")
+
         self.target_critic1 = copy.deepcopy(self.critic1)
         self.target_critic2 = copy.deepcopy(self.critic2)
-        self.critic1.init_weights()
-        self.critic2.init_weights()
-        self.target_critic1.init_weights()
-        self.target_critic2.init_weights()
+        # self.critic1.init_weights()
+        # self.critic2.init_weights()
+        # self.target_critic1.init_weights()
+        # self.target_critic2.init_weights()
 
 
         #replay buffer
         self.replay_buffer = RNNReplayBuffer(1000000, seq_len, obs_dim, action_dim)
 
         # Optimizers
-        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=actor_lr, amsgrad = True, weight_decay=1e-4)
-        self.critic1_optimizer = torch.optim.Adam(self.critic1.parameters(), lr=critic_lr, amsgrad = True, weight_decay=1e-4)
-        self.critic2_optimizer = torch.optim.Adam(self.critic2.parameters(), lr=critic_lr, amsgrad = True, weight_decay=1e-4)
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=actor_lr, amsgrad = True, weight_decay=1e-6)
+        self.critic1_optimizer = torch.optim.Adam(self.critic1.parameters(), lr=critic_lr, amsgrad = True, weight_decay=1e-6)
+        self.critic2_optimizer = torch.optim.Adam(self.critic2.parameters(), lr=critic_lr, amsgrad = True, weight_decay=1e-6)
 
 
 
@@ -113,67 +120,61 @@ class TD3Agent:
 
         with torch.no_grad():
             next_action,_ = self.actor(next_obs_seq)
+            # print(next_action.shape)
+            # exit()
             # next_action = n_action[:, -1, :]  # Shape: (batch_size, state_dim)
             # next_action = next_action.detach().squeeze()
 
-            noise = torch.normal(0, self.noise_std, size=next_action.shape).to(self.device)
+            noise = torch.normal(0, self.policy_smooth_noise, size=next_action.shape).to(self.device)
             # noise = torch.normal(0, 0.0, size=next_action.shape).to(self.device)
 
             noise = noise.clamp(-0.5, 0.5)
             next_action = (next_action + noise).clamp(-self.max_action, self.max_action)
             
-            # next_action_seq = action_seq.clone()  # [64, n, 4] (copy of the original action sequence)
-            # next_action_seq[:,:-1,:] = action_seq[:, 1:, :]
-            # next_action_seq[:, -1, :] = next_action  # [64, n, 4]
-
-            # next_action[:, :-1, :] = action_seq[:, 1:, :] #replace some next action with exiisting action seq.
-
             critic_states = torch.cat([next_obs_seq, next_action], dim=-1)
 
             target_q1 = self.target_critic1(critic_states)
             target_q2 = self.target_critic2(critic_states)
 
-            target_q1 = target_q1[:, -1, :]  # Shape: (batch_size, state_dim)
+            # target_q1 = target_q1[:, -1, :]  # Shape: (batch_size, state_dim)
             # target_q1 = target_q1.detach().squeeze()
-            target_q2 = target_q2[:, -1, :]  # Shape: (batch_size, state_dim)
+            # target_q2 = target_q2[:, -1, :]  # Shape: (batch_size, state_dim)
             # target_q2 = target_q2.detach().squeeze()
 
-            reward = reward_seq[:, -1, :]
-            target_q = reward + self.gamma * torch.min(target_q1, target_q2)
+            # reward = reward_seq[:, -1, :]
+            target_q = reward_seq + self.gamma * torch.min(target_q1, target_q2)
 
         # Critic losses
         critic_states = torch.cat([obs_seq, action_seq], dim=-1)
         q1 = self.critic1(critic_states)
         q2 = self.critic2(critic_states)
 
-        q1 = q1[:, -1, :]  # Shape: (batch_size, state_dim)
-        q2 = q2[:, -1, :]  # Shape: (batch_size, state_dim)
+        # q11 = q1[:, -1, :]  # Shape: (batch_size, state_dim)
+        # q22 = q2[:, -1, :]  # Shape: (batch_size, state_dim)
 
-        critic1_loss = nn.MSELoss()(q1, target_q)
-        critic2_loss = nn.MSELoss()(q2, target_q)
-
+        critic1_loss = nn.HuberLoss(delta=10.0)(q1, target_q)
+        critic2_loss = nn.HuberLoss(delta=10.0)(q2, target_q)
+        # critic1_loss = nn.MSELoss()(q1, target_q)
+        # critic2_loss = nn.MSELoss()(q2, target_q)
+        # print(q1.shape)
+        # exit()
         print(f"Average Q1: {q1.mean().item():.4f}",
+            f"STD Q1: {q1.std().item():.4f}",
             f"Average Q2: {q2.mean().item():.4f}",
+            f"STD Q2: {q2.std().item():.4f}",
             f"Average TQ: {target_q.mean().item():.4f}",
+            f"STD TQ: {target_q.std().item():.4f}",
             f"reward: {reward_seq.mean().item():.4f}")
 
         # if critic1_loss < self.max_loss:
         self.critic1_optimizer.zero_grad()
-        # torch.autograd.set_detect_anomaly(True)
-        critic1_loss.backward()
-        self.critic1_optimizer.step()
-        # else:
-            # critic1_loss = torch.tensor(0.0, device=self.device)
-
-        # if critic2_loss < self.max_loss:
-        # print("check point")
         self.critic2_optimizer.zero_grad()
+        critic_loss = critic1_loss + critic2_loss
         # torch.autograd.set_detect_anomaly(True)
-        critic2_loss.backward()
+        critic_loss.backward()
+        self.critic1_optimizer.step()
         self.critic2_optimizer.step()
-        # print("check point2")
-        # else:
-            # critic2_loss = torch.tensor(0.0, device=self.device)
+
         # Actor loss: minimize the negative Q-value (maximize Q-value)
         actor_loss = torch.tensor(0.0)  # Default value if not updated
         self.total_it += 1

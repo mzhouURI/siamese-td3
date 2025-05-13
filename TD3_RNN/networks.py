@@ -10,6 +10,7 @@ class RNNActor(nn.Module):
         super().__init__()
         self.rnn = nn.LSTM(obs_dim, hidden_size, rnn_layers, batch_first=True)
         self.fc = nn.Linear(hidden_size, action_dim)
+        self.norm = nn.LayerNorm(hidden_size)
 
     def forward(self, obs_seq, hidden = None):
         # obs_seq: (B, T, obs_dim)
@@ -17,7 +18,7 @@ class RNNActor(nn.Module):
         rnn_out, hidden = self.rnn(obs_seq, hidden)  # rnn_out: (B, T, hidden_size)
 
         # rnn_out = rnn_out[:,-1,:]  #grab last one?
-
+        rnn_out = self.norm(rnn_out)
         action = self.fc(rnn_out)  # (B, T, action_dim)
 
         # action = last_out[:, -1, :].clone()  # Ensures it's not a view
@@ -63,6 +64,7 @@ class RNNCritic(nn.Module):
 
         self.rnn = nn.LSTM(input_dim, hidden_size, rnn_layers, batch_first=True)
         self.q_head = nn.Linear(hidden_size, 1)  # Single Q-value output
+        self.norm = nn.LayerNorm(hidden_size)
 
     
     def forward(self, obs_seq, hidden=None):
@@ -72,7 +74,7 @@ class RNNCritic(nn.Module):
         rnn_out, hidden = self.rnn(obs_seq, hidden)  # rnn_out: (B, T, hidden_size)
 
         # rnn_out = rnn_out[:,-1,:]  #grab last one?
-        
+        rnn_out = self.norm(rnn_out)
         q_values = self.q_head(rnn_out)  # (B, T, 1)
         # q = q_values[:, -1, :].clone()  # Ensures it's not a view
 

@@ -60,7 +60,7 @@ class SAC_RNN_ROS(Node):
         
         self.window_size = 20
         self.batch_size = 128
-        self.batch_warmup_size =self.batch_size*5
+        self.batch_warmup_size =self.batch_size*2
 
         self.rnn_obs_buffer = collections.deque(maxlen=self.window_size)
         self.rnn_new_obs_buffer = collections.deque(maxlen=self.window_size)
@@ -74,8 +74,11 @@ class SAC_RNN_ROS(Node):
 
         integral_window = 100
         self.integral_error = collections.deque(maxlen=integral_window)
+        self.integral_sum = torch.zeros((1, 4), dtype=torch.float32)
 
-        self.current_action = torch.zeros(4, 1)
+        self.integral_time = 0
+        self.episode_length = 100
+
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = TD3Agent(obs_dim = len(self.state) + len(self.error_state), action_dim = 4,
@@ -83,11 +86,15 @@ class SAC_RNN_ROS(Node):
                                 device = self.device,
                                 hidden_size = 512, rnn_layer = 3,
                                 actor_ckpt = 'actor_rnn.pth',
+                                # critic_ckpt = 'critic_rnn.pth',
                                 actor_lr = 1e-6, critic_lr= 1e-4,  tau = 0.005, noise_std= 0.1, policy_delay=2
                                 )
         self.total_reward = 0
 
-        self.timer_setpoint_update = self.create_timer(100, self.set_point_update)
+        self.current_action = torch.zeros(4, 1).to(self.device)
+        self.delta_action = torch.zeros(4, 1).to(self.device)
+
+        self.timer_setpoint_update = self.create_timer(self.episode_length, self.set_point_update)
         self.timer_setpoint_pub = self.create_timer(1.0, self.set_point_publish)
         self.timer_pub = self.create_timer(0.1, self.step)
         self.actor_hidden = self.model.actor.init_hidden(1)
@@ -171,6 +178,8 @@ class SAC_RNN_ROS(Node):
             self.actor_hidden = self.model.actor.init_hidden(1)
             self.integral_error.clear()
             reward = 0
+            self.integral_sum = torch.zeros((1, 4), dtype=torch.float32)
+            self.integral_time = 0
         # else:
         # print(len(self.rnn_action_buffer))
         #get the states before update so this is our previous state.
@@ -181,13 +190,23 @@ class SAC_RNN_ROS(Node):
         
         # get new error state for computing reward
         new_error_state = torch.tensor(self.error_state, dtype=torch.float32).unsqueeze(0)  
+  
+        ##adaptive integral sum
+        self.integral_time = self.integral_time + 0.1
+        T = self.episode_length
+        integral_k = 1 / (1 + 0.1* np.exp(T / 2 - self.integral_time))
+        self.integral_sum = self.integral_sum + integral_k*self.error_state
+
+
         self.rnn_new_error_buffer.append(new_error_state)
-
-
         self.integral_error.append(new_error_state)
 
+        #delta action
+        if len(self.rnn_action_buffer) > 1:
+            self.delta_action = self.rnn_action_buffer[-1] - self.rnn_action_buffer[-2]
+
         #calculate reward from previous action
-        reward = self.calculate_reward(new_error_state, self.integral_error)
+        reward = self.calculate_reward(new_error_state, self.integral_sum, self.delta_action)
         reward = reward.detach().float().unsqueeze(0)
         self.rnn_reward_buffer.append(reward)
 
@@ -204,7 +223,7 @@ class SAC_RNN_ROS(Node):
         # add to buffer when the rnn sequence buffer is filled
         # print(len(rnn_prev_actions))
         if(len(self.rnn_action_buffer)==self.window_size):   
-
+            
             action, self.actor_hidden = self.model.select_action(obs_seq, hidden = self.actor_hidden)
             # print(self.actor_hidden.shape)
             #take the last one from the network
@@ -251,13 +270,15 @@ class SAC_RNN_ROS(Node):
         # except Exception as e:
         #     self.get_logger().error(f"Error in step(): {e}")
 
-    def calculate_reward(self, new_error_pose, new_error_pose_seq):
+    def calculate_reward(self, new_error_pose, new_error_pose_seq, delta_action):
         new_error = new_error_pose.view(-1, 1)
         integral_len = len(new_error_pose_seq)
-        new_error_pose_seq = list(new_error_pose_seq)           # Convert deque to list
-        new_error_pose_seq = torch.stack(new_error_pose_seq) 
         # print(new_error_pose_seq.shape)
+        new_error_pose_seq = new_error_pose_seq.view(-1, 1)
 
+
+        delta_action_reward = 10*torch.sum(abs(delta_action))
+        # print(delta_action_reward)
         # Define a weight matrix W: shape [3, 3]
         w_z = 0.3
         w_pitch = 0.15
@@ -276,9 +297,10 @@ class SAC_RNN_ROS(Node):
 
         W = torch.tensor([w_z, w_pitch, w_yaw, w_u], dtype=torch.float32, device = new_error_pose.device)
         # sum all the error and calcualte the mean
-        integral_sum =  torch.sum(new_error_pose_seq, dim=0)
+        # integral_sum =  torch.sum(new_error_pose_seq, dim=0)
         # print(histo_error)
-        accum_error = torch.sum(abs(integral_sum) * W )
+        # print(new_error_pose_seq)
+        accum_error = torch.sum(abs(new_error_pose_seq) * W )
 
 
         ##delta error
@@ -300,10 +322,10 @@ class SAC_RNN_ROS(Node):
 
         error_reward = -50*error_reward
         accum_error_reward = - 2*accum_error
-        reward = error_reward + 1*bonus + accum_error_reward - error_rate_reward
+        reward = error_reward + 1*bonus + accum_error_reward - error_rate_reward - delta_action_reward
         # print(f"error_reward: {error_reward: .4f}",
         #       f"accu_reward: {accum_error_reward: .4f}",
-        #       f"error_rate_reward: {error_rate_reward: .4f}")
+        #       f"delta_action_reward: {delta_action_reward: .4f}")
 
         return reward
 
