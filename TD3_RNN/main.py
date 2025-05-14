@@ -12,7 +12,7 @@ from std_msgs.msg import Float64, Float64MultiArray
 import torch
 import collections
 
-class SAC_RNN_ROS(Node):
+class TD3_RNN_ROS(Node):
     def __init__(self):
         super().__init__('ddpg_node')
         self.set_point_interval = 100
@@ -335,7 +335,7 @@ class SAC_RNN_ROS(Node):
 def main(args=None):
 
     rclpy.init(args=args)
-    node = SAC_RNN_ROS()
+    node = TD3_RNN_ROS()
     node.set_point_update()
 
     try:

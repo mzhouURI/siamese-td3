@@ -124,7 +124,7 @@ class TD3Agent:
             # exit()
             # next_action = n_action[:, -1, :]  # Shape: (batch_size, state_dim)
             # next_action = next_action.detach().squeeze()
-
+            next_action[:, :-1,:] = action_seq[:,1:,:]  ##get the action from the sequece
             noise = torch.normal(0, self.policy_smooth_noise, size=next_action.shape).to(self.device)
             # noise = torch.normal(0, 0.0, size=next_action.shape).to(self.device)
 
@@ -186,13 +186,13 @@ class TD3Agent:
             actor_action, _ = self.actor(obs_seq)
             # action_seq[:, -1] = actor_action[:, -1, :].detach().squeeze()
 
-            # actor_action[:, :-1, :] = action_seq[:, 1:, :] #plug existing action seq except the first one into actor
+            actor_action[:, :-1, :] = action_seq[:, :-1, :] #replace the action with the sequence data except the last one?
 
             critic_states = torch.cat([obs_seq, actor_action], dim=-1)
 
             q = self.critic1(critic_states)
 
-            q = q[:, -1, :]  # Shape: (batch_size, state_dim)
+            # q = q[:, -1, :]  # Shape: (batch_size, state_dim)
 
             actor_loss = - q.mean()
             
