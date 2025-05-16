@@ -1,16 +1,16 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from actor_transformer import VehicleActor
-from modeler_transformer import VehicleModeler
+from network.actor_transformer import VehicleActor
+from network.modeler_transformer import VehicleModeler
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, Subset, random_split
-from utilites import LoadData, GetData
+from network.utilites import LoadData, GetData, safe_atan2
 
 ###load data into batches
 seq_len = 50       # sequence length for transformer
 batch_size = 128    # number of sequences per batch
-num_epochs = 40    # how many passes over the dataset
+num_epochs = 20    # how many passes over the dataset
 train_loader, val_loader, state_dim, error_dim, action_dim = LoadData("offline_data/filename1.csv", 0.2, batch_size, seq_len)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -29,9 +29,9 @@ loss_fn = nn.MSELoss(reduction = 'mean')
 #                  ).to(device)
 
 Vmodel = VehicleModeler(state_dim = state_dim, action_dim = action_dim,
-                 d_model = 128, nhead = 2, num_layers = 2,
+                 d_model = 256, nhead = 2, num_layers = 2,
                  ).to(device)
-Vmodel.load_state_dict(torch.load('modeler_rnn.pth', map_location=device))
+Vmodel.load_state_dict(torch.load('modeler.pth', map_location=device))
 
 for param in Vmodel.parameters():
     param.requires_grad = False
@@ -45,6 +45,21 @@ optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, amsgrad = True)
 ep_train_loss = []
 ep_val_loss = []
 
+ind_e_cos_pitch = 1
+ind_e_sin_pitch =2
+ind_e_cos_yaw =3
+ind_e_sin_yaw = 4
+ind_e_u = 5
+ind_e_z = 0
+
+
+ind_s_cos_pitch = 3
+ind_s_sin_pitch =4
+ind_s_cos_yaw =5
+ind_s_sin_yaw = 6
+ind_s_u = 7
+ind_s_z = 0
+
 for epoch in range(num_epochs):
     
     total_train_loss = 0.0
@@ -57,80 +72,73 @@ for epoch in range(num_epochs):
         batch = batch.to(device)  # shape: (batch_size, seq_len, input_dim + action_dim)
         initial_state, initial_error_state, \
         state_seq, _, error_state_seq, _, _, _=GetData(batch, state_dim, error_dim, action_dim)
+        
+        
+        ##restore desired state from state seq and error_state_seq
+        c_depth = error_state_seq[:,:,ind_e_z] + state_seq[:,:,ind_s_z]
+        c_u = error_state_seq[:,:,ind_e_u] + state_seq[:, : ,ind_s_u]
 
-        actor_states= torch.cat([initial_state, initial_error_state], dim = 2)
+        e_cos_pitch = error_state_seq[:, :, ind_e_cos_pitch]
+        e_sin_pitch = error_state_seq[:, :, ind_e_sin_pitch]
+        e_cos_yaw = error_state_seq[:, :, ind_e_cos_yaw]
+        e_sin_yaw = error_state_seq[:, :, ind_e_sin_yaw]
+
+        m_cos_pitch = state_seq[:, :, ind_s_cos_pitch]
+        m_sin_pitch = state_seq[:, :, ind_s_sin_pitch]
+        m_cos_yaw = state_seq[:, :, ind_s_cos_yaw]
+        m_sin_yaw = state_seq[:, :, ind_s_sin_yaw]
+
+        c_sin_pitch = e_sin_pitch*m_cos_pitch + e_cos_pitch*m_sin_pitch
+        c_cos_pitch = e_cos_pitch*m_cos_pitch - e_sin_pitch*m_sin_pitch
+
+        c_sin_yaw = e_sin_yaw*m_cos_yaw + e_cos_yaw*m_sin_yaw
+        c_cos_yaw = e_cos_yaw*m_cos_yaw - e_sin_yaw*m_sin_yaw
+
+        c_pitch = safe_atan2(c_sin_pitch, c_cos_pitch)
+        c_yaw = safe_atan2(c_sin_yaw, c_cos_yaw)
+
+
+        desired_states = torch.stack([c_depth, c_pitch, c_yaw, c_u], dim = -1)
+
+        #zero depth for reference
+        zero_depth_initial_state = initial_state.clone()
+        zero_depth_initial_state[:,:,0] = 0
+
+
+        actor_states= torch.cat([zero_depth_initial_state, initial_error_state], dim = 2)
         pred_actions= model.forward(actor_states, seq_len)  # Your model takes (state, error) as inputs
         # print(pred_actions.shape)
         
         # with torch.no_grad():
-        pred_states = Vmodel(initial_state, pred_actions)
-
-        #computing predicted state error as the loss
-        #x* - x = e  so x* = e+x
-        e_depth = error_state_seq[:,:,0]
-        e_u = error_state_seq[:,:,5]
-
-        e_cos_pitch = error_state_seq[:, :, 1]
-        e_sin_pitch = error_state_seq[:, :, 2]
-        e_pitch = torch.atan2(e_sin_pitch, e_cos_pitch)
-
-        e_cos_yaw = error_state_seq[:, :, 3]
-        e_sin_yaw = error_state_seq[:, :, 4]
-        e_yaw = torch.atan2(e_sin_yaw, e_cos_yaw)
-
-        e_controlled_state = torch.stack([e_depth, e_pitch, e_yaw, e_u ], dim = -1)
+        pred_states = Vmodel(zero_depth_initial_state, pred_actions)
+        pred_states [:,:,0] = pred_states[:,:,0] + initial_state[:,:,0]
 
 
-        m_cos_yaw = state_seq[:, :, 3]
-        m_sin_yaw = state_seq[:, :, 4]
-        m_yaw = torch.atan2(m_sin_yaw, m_cos_yaw)
-
-
-        m_depth = state_seq[:,:,0]
-
-        m_cos_pitch = state_seq[:, :, 1]
-        m_sin_pitch = state_seq[:, :, 2]
-        m_pitch = torch.atan2(m_sin_pitch, m_cos_pitch)
-
-        m_cos_yaw = state_seq[:, :, 3]
-        m_sin_yaw = state_seq[:, :, 4]
-        m_yaw = torch.atan2(m_sin_yaw, m_cos_yaw)
-
-        m_u = state_seq[:, : ,5]
-
-        m_controlled_state = torch.stack([m_depth, m_pitch, m_yaw, m_u ], dim = -1)
-
-        desired_states = e_controlled_state + m_controlled_state
 
         ##Predicted state
-        p_depth = pred_states[:,:,0]
-        p_cos_pitch = pred_states[:, :, 1]
-        p_sin_pitch = pred_states[:, :, 2]
-        p_pitch = torch.atan2(p_sin_pitch, p_cos_pitch)
+        p_depth = pred_states[:,:,ind_s_z]
+        p_u = pred_states[:, : ,ind_s_u]
 
-        p_cos_yaw = pred_states[:, :, 3]
-        p_sin_yaw = pred_states[:, :, 4]
-        p_yaw = torch.atan2(p_sin_yaw, p_cos_yaw)
+        p_cos_pitch = pred_states[:, :, ind_s_cos_pitch]
+        p_sin_pitch = pred_states[:, :, ind_s_sin_pitch]
 
-        p_u = pred_states[:, : ,5]
+        p_cos_yaw = pred_states[:, :, ind_s_cos_yaw]
+        p_sin_yaw = pred_states[:, :, ind_s_sin_yaw]
 
-        pred_controlled_state = torch.stack([p_depth, p_pitch, p_yaw, p_u ], dim = -1)
+        #desired - predition
+        pred_e_cos_pitch = c_cos_pitch*p_cos_pitch + c_sin_pitch *p_sin_pitch
+        pred_e_sin_pitch = c_sin_pitch*p_cos_pitch - c_cos_pitch*p_sin_pitch
+        pred_e_cos_yaw = c_cos_yaw*p_cos_yaw + c_sin_yaw *p_sin_yaw
+        pred_e_sin_yaw = c_sin_yaw*p_cos_yaw - c_cos_yaw*p_sin_yaw
 
-        #error between desired and the predicted states
-        pred_e = desired_states - pred_controlled_state
+        pred_e_depth = c_depth - p_depth
+        pred_e_u     = c_u - p_u
+        pred_e_pitch = safe_atan2(pred_e_sin_pitch, pred_e_cos_pitch)
+        pred_e_yaw = safe_atan2(pred_e_sin_yaw, pred_e_cos_yaw)
 
-        #redo the angle different for wrapping problem
-        diff_pitch = pred_e[:,:,1]
-        diff_yaw = pred_e[:,:,2]
+        pred_e = torch.stack([pred_e_depth, 10*pred_e_pitch, pred_e_yaw, 5*pred_e_u ], dim = -1)
 
-        #solve the wrapping problem
-        diff_yaw = (diff_yaw + np.pi) % (2 * np.pi) - np.pi
-        diff_pitch = (diff_pitch + np.pi) % (2 * np.pi) - np.pi
-
-        pred_e[:,:,1] = diff_pitch
-        pred_e[:,:,2] = diff_yaw
-
-        loss = torch.sum(pred_e**2)
+        loss = torch.mean(pred_e**2)
         # print(loss.item())
         optimizer.zero_grad()
         loss.backward()
@@ -214,4 +222,4 @@ for epoch in range(num_epochs):
 # plt.ioff()  # Turn off interactive mode at the end
 # plt.show()
 
-torch.save(model.state_dict(), "actor_rnn.pth")
+torch.save(model.state_dict(), "actor.pth")

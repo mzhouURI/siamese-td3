@@ -1,26 +1,26 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from modeler_transformer import VehicleModeler
+from network.modeler_transformer import VehicleModeler
 import torch
 import torch.nn as nn
-from utilites import LoadData, GetData
+from network.utilites import LoadData, GetData
 
 
 ###load data into batches
 seq_len = 50       # sequence length for transformer
 batch_size = 128    # number of sequences per batch
-num_epochs = 40    # how many passes over the dataset
+num_epochs = 20    # how many passes over the dataset
 train_loader, val_loader, state_dim, error_dim, action_dim = LoadData("offline_data/filename1.csv", 0.2, batch_size, seq_len)
 
 
-##make model
+##make modlayernorm
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # model = VehicleModeler(state_dim = state_dim, action_dim = action_dim,
 #                  hidden_dim = 128, rnn_layers = 2,
 #                  ).to(device)
 
 model = VehicleModeler(state_dim = state_dim, action_dim = action_dim,
-                 d_model = 128, nhead = 2, num_layers = 2,
+                 d_model = 256, nhead = 2, num_layers = 2,
                  ).to(device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, amsgrad = True)
@@ -42,9 +42,15 @@ for epoch in range(num_epochs):
 
         initial_state, _, _, new_state_seq, _, _, action_seq, _=GetData(batch, state_dim, error_dim, action_dim)
 
-        pred_new_state_seq = model.forward(initial_state, action_seq)  # Your model takes (state, error) as inputs
+        zero_depth_initial_state = initial_state.clone()
+        #zero depth for reference
+        zero_depth_initial_state[:,:,0] = 0
+        # print(zero_depth_initial_state.shape)
+
+        pred_new_state_seq = model.forward(zero_depth_initial_state, action_seq)  # Your model takes (state, error) as inputs
         # print(pred_new_state_seq.shape)
-        # exit()
+        pred_new_state_seq [:,:,0] = pred_new_state_seq[:,:,0] + initial_state[:,:,0]
+    
         loss = nn.MSELoss(reduction="sum")(new_state_seq, pred_new_state_seq)
         optimizer.zero_grad()
         loss.backward()
@@ -59,9 +65,15 @@ for epoch in range(num_epochs):
         for batch in val_loader:
             batch = batch.to(device)
             initial_state, _, _, new_state_seq, _, _, action_seq, _=GetData(batch, state_dim, error_dim, action_dim)
-            
-            pred_new_state_seq = model(initial_state, action_seq)
-            total_val_loss += nn.MSELoss(reduction="sum")(pred_new_state_seq, new_state_seq).item()
+
+            zero_depth_initial_state = initial_state.clone()
+            zero_depth_initial_state[:,:,0] = 0
+
+            pred_new_state_seq = model(zero_depth_initial_state, action_seq)
+            #add depth back to prediction
+            pred_new_state_seq [:,:,0] = pred_new_state_seq[:,:,0] + initial_state[:,:,0]
+            #compare predicted depth to the actual depth
+            total_val_loss += nn.MSELoss(reduction="sum")(new_state_seq, pred_new_state_seq).item()
             batch_count += 1
 
             #display
@@ -116,4 +128,4 @@ for epoch in range(num_epochs):
 # plt.ioff()  # Turn off interactive mode at the end
 # plt.show()
 
-torch.save(model.state_dict(), "modeler_rnn.pth")
+torch.save(model.state_dict(), "modeler.pth")
