@@ -9,7 +9,8 @@ class VehicleActor(nn.Module):
         super().__init__()
         self.action_dim = action_dim
         input_dim = state_dim  # Input: state, command, prev_action
-        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers=rnn_layers, batch_first=True)
+        self.fc_pre = nn.Linear(input_dim,hidden_dim)
+        self.lstm = nn.LSTM(hidden_dim, hidden_dim, num_layers=rnn_layers, batch_first=True)
         self.fc = nn.Linear(hidden_dim, action_dim)
         self.layernorm = nn.LayerNorm(state_dim)
 
@@ -29,10 +30,11 @@ class VehicleActor(nn.Module):
 
         action_seq = []
 
+        x = self.layernorm(state)
+        x = self.fc_pre(x)
+
         for t in range(seq_len):
             # x = torch.cat([state, action], dim=-1)  # [B, D]
-            x = state
-            x = self.layernorm(x)
             out,h = self.lstm(x, h)
             action = torch.tanh(self.fc(out))  # Predict action_t
             action_seq.append(action)

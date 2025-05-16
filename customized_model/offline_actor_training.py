@@ -1,125 +1,46 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from actor import VehicleActor
-from modeler import VehicleModeler
+from actor_transformer import VehicleActor
+from modeler_transformer import VehicleModeler
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, Subset, random_split
-import time
+from utilites import LoadData, GetData
 
-class SequenceDataset(Dataset):
-    def __init__(self, data, seq_len):
-        self.data = data
-        self.seq_len = seq_len
-
-    def __len__(self):
-        return len(self.data) - self.seq_len
-
-    def __getitem__(self, idx):
-        # Returns a sequence of length `seq_len`
-        sequence = self.data[idx:idx + self.seq_len]
-        return torch.tensor(sequence, dtype=torch.float32)
-
-data = np.loadtxt('offline_data/filename1.csv', delimiter=',')
-# 0:12: t, ex, ey, ez, e_roll, e_pitch, e_yaw, e_u, e_v, e_w, e_p, e_q, e_r
-#13-15: x,y,z,
-#16:18: roll, pitch, yaw, 
-#19:24 u,v,w,p,q,r
-pitch = data[:-1,17]
-yaw = data[:-1,18]
-cos_pitch = np.cos(pitch)
-sin_pitch = np.sin(pitch)
-cos_yaw = np.cos(yaw)
-sin_yaw = np.sin(yaw)
-
-
-# Remove pitch and yaw columns from `states`
-base_states = data[:-1, [15, 19, 23, 24]]
-# Trim cos/sin arrays to match states shape (one less row due to data[:-1])
-# Stack new states: [x, cos_pitch, sin_pitch, cos_yaw, sin_yaw, z, vx, vy]
-states = np.column_stack((base_states[:, 0],   # col 15 (x)
-                          cos_pitch,
-                          sin_pitch,
-                          cos_yaw,
-                          sin_yaw,
-                          base_states[:, 1:],  # cols 19, 23, 24 (z, vx, vy)
-                         ))
-
-#depth, pitch, yaw, surge
-error_states = data[:-1, [3,5,6,7]]
-
-
-current_action = data[:-1, -4:]
-action_seq = data[1:, -4:]
-
-pitch = data[1:,17]
-yaw = data[1:,18]
-cos_pitch = np.cos(pitch)
-sin_pitch = np.sin(pitch)
-cos_yaw = np.cos(yaw)
-sin_yaw = np.sin(yaw)
-base_state_seq = data[1:, [15, 19, 23, 24]]
-state_seq = np.column_stack((base_state_seq[:, 0],   # col 15 (x)
-                          cos_pitch,
-                          sin_pitch,
-                          cos_yaw,
-                          sin_yaw,
-                          base_state_seq[:, 1:],  # cols 19, 23, 24 (z, vx, vy)
-                         ))
-# state_seq = data[1:, [15,17,18,19,23,24]]
-
-state_dim = states.shape[1]
-error_dim = error_states.shape[1]
-action_dim = current_action.shape[1]
+###load data into batches
+seq_len = 50       # sequence length for transformer
+batch_size = 128    # number of sequences per batch
+num_epochs = 40    # how many passes over the dataset
+train_loader, val_loader, state_dim, error_dim, action_dim = LoadData("offline_data/filename1.csv", 0.2, batch_size, seq_len)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
-model = VehicleActor(state_dim = state_dim, action_dim = action_dim,
-                        hidden_dim = 256, rnn_layers = 2,
+# model = VehicleActor(state_dim = state_dim+error_dim, action_dim = action_dim,
+#                         hidden_dim = 256, rnn_layers = 2,
+#                         ).to(device)
+model = VehicleActor(state_dim = state_dim+error_dim, action_dim = action_dim,
+                        d_model = 256, nhead = 2, num_layers=2,
                         ).to(device)
-
 loss_fn = nn.MSELoss(reduction = 'mean')
 
+# Vmodel = VehicleModeler(state_dim = state_dim, action_dim = action_dim,
+#                  hidden_dim = 256, rnn_layers = 3,
+#                  ).to(device)
 
 Vmodel = VehicleModeler(state_dim = state_dim, action_dim = action_dim,
-                 hidden_dim = 256, rnn_layers = 2,
+                 d_model = 128, nhead = 2, num_layers = 2,
                  ).to(device)
 Vmodel.load_state_dict(torch.load('modeler_rnn.pth', map_location=device))
 
 for param in Vmodel.parameters():
     param.requires_grad = False
+
 Vmodel.train()
 model.train()
 
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, amsgrad = True)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, amsgrad = True)
 
-# Assuming error_states, states, and actions are already extracted from `data`
-training_data = np.hstack((states, state_seq, error_states, current_action, action_seq))
-
-
-ep_loss = []
-batch_size = 128    # number of sequences per batch
-num_epochs = 40    # how many passes over the dataset
-seq_len = 20       # sequence length for transformer
-
-
-dataset = SequenceDataset(training_data, seq_len=seq_len)
-
-# Split sizes (e.g., 80% train, 20% validation)
-val_ratio = 0.2
-val_size = int(len(dataset) * val_ratio)
-train_size = len(dataset) - val_size
-
-# Randomly split
-train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
-
-# DataLoaders
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
-val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
-
-# plt.ion()  # Turn on interactive mode
-fig, ax = plt.subplots(figsize=(10, 6))
 
 ep_train_loss = []
 ep_val_loss = []
@@ -134,48 +55,54 @@ for epoch in range(num_epochs):
     batch_count = 0
     for batch in train_loader:
         batch = batch.to(device)  # shape: (batch_size, seq_len, input_dim + action_dim)
+        initial_state, initial_error_state, \
+        state_seq, _, error_state_seq, _, _, _=GetData(batch, state_dim, error_dim, action_dim)
 
-
-        # state = batch[:, 0, :state_dim].clone().detach().requires_grad_()
-        # action = batch[:, 0, -2*action_dim:-action_dim].clone().detach().requires_grad_()
-
-        state = batch[:, 0, :state_dim].clone().detach().requires_grad_()
-        # action = batch[:, 0, -2*action_dim:-action_dim].clone().detach().requires_grad_()
-
-        state = state.unsqueeze(1)
-        # action = action.unsqueeze(1)
-
-        new_state_seq = batch[:, :, state_dim:2*state_dim]
-        action_seq = batch[:, :, -action_dim:]
-        
-        pred_actions= model.forward(state, 20)  # Your model takes (state, error) as inputs
+        actor_states= torch.cat([initial_state, initial_error_state], dim = 2)
+        pred_actions= model.forward(actor_states, seq_len)  # Your model takes (state, error) as inputs
         # print(pred_actions.shape)
         
         # with torch.no_grad():
-        pred_states = Vmodel(state, pred_actions)
+        pred_states = Vmodel(initial_state, pred_actions)
 
         #computing predicted state error as the loss
         #x* - x = e  so x* = e+x
-        states = batch [:, :, :state_dim]
-        state_errors = batch[:, :, 2*state_dim:2*state_dim+4]
+        e_depth = error_state_seq[:,:,0]
+        e_u = error_state_seq[:,:,5]
 
-        m_depth = states[:,:,0]
-        m_cos_pitch = states[:, :, 1]
-        m_sin_pitch = states[:, :, 2]
-        m_pitch = torch.atan2(m_sin_pitch, m_cos_pitch)
+        e_cos_pitch = error_state_seq[:, :, 1]
+        e_sin_pitch = error_state_seq[:, :, 2]
+        e_pitch = torch.atan2(e_sin_pitch, e_cos_pitch)
 
-        m_cos_yaw = states[:, :, 3]
-        m_sin_yaw = states[:, :, 4]
+        e_cos_yaw = error_state_seq[:, :, 3]
+        e_sin_yaw = error_state_seq[:, :, 4]
+        e_yaw = torch.atan2(e_sin_yaw, e_cos_yaw)
+
+        e_controlled_state = torch.stack([e_depth, e_pitch, e_yaw, e_u ], dim = -1)
+
+
+        m_cos_yaw = state_seq[:, :, 3]
+        m_sin_yaw = state_seq[:, :, 4]
         m_yaw = torch.atan2(m_sin_yaw, m_cos_yaw)
 
-        m_u = states[:, : ,5]
 
-        
+        m_depth = state_seq[:,:,0]
+
+        m_cos_pitch = state_seq[:, :, 1]
+        m_sin_pitch = state_seq[:, :, 2]
+        m_pitch = torch.atan2(m_sin_pitch, m_cos_pitch)
+
+        m_cos_yaw = state_seq[:, :, 3]
+        m_sin_yaw = state_seq[:, :, 4]
+        m_yaw = torch.atan2(m_sin_yaw, m_cos_yaw)
+
+        m_u = state_seq[:, : ,5]
 
         m_controlled_state = torch.stack([m_depth, m_pitch, m_yaw, m_u ], dim = -1)
 
-        desired_states = state_errors + m_controlled_state
+        desired_states = e_controlled_state + m_controlled_state
 
+        ##Predicted state
         p_depth = pred_states[:,:,0]
         p_cos_pitch = pred_states[:, :, 1]
         p_sin_pitch = pred_states[:, :, 2]
@@ -189,20 +116,21 @@ for epoch in range(num_epochs):
 
         pred_controlled_state = torch.stack([p_depth, p_pitch, p_yaw, p_u ], dim = -1)
 
-        # print(pred_controlled_state.shape)
-
+        #error between desired and the predicted states
         pred_e = desired_states - pred_controlled_state
 
+        #redo the angle different for wrapping problem
         diff_pitch = pred_e[:,:,1]
         diff_yaw = pred_e[:,:,2]
 
+        #solve the wrapping problem
         diff_yaw = (diff_yaw + np.pi) % (2 * np.pi) - np.pi
         diff_pitch = (diff_pitch + np.pi) % (2 * np.pi) - np.pi
 
         pred_e[:,:,1] = diff_pitch
         pred_e[:,:,2] = diff_yaw
 
-        loss = torch.mean(pred_e**2)
+        loss = torch.sum(pred_e**2)
         # print(loss.item())
         optimizer.zero_grad()
         loss.backward()
@@ -212,7 +140,6 @@ for epoch in range(num_epochs):
         # for name, param in model.named_parameters():
         #     if param.grad is not None:
         #         print(f"{name}: min = {param.grad.min().item():.6f}, max = {param.grad.max().item():.6f}")
-        
         optimizer.step()
 
         # plot_desired_data = desired_states.reshape(-1, 4)
@@ -220,7 +147,7 @@ for epoch in range(num_epochs):
         pre_e_flat = pred_e.reshape(-1, 4)
         # print(pred_e.shape)
 
-        if (epoch % 5 == 0) and (batch_count >1) and (batch_count <3):
+        if (epoch % 10 == 0) and (batch_count >1) and (batch_count <3):
             for i in range(4):
                 dd = pre_e_flat[:,i].detach().cpu().numpy() 
                 # plt.plot(plot_desired_data[:,i].detach().cpu().numpy(), label='Label (optional)', color='blue', linestyle='-', marker='o')  # Customize as needed
