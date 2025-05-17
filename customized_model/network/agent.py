@@ -260,12 +260,7 @@ class RL_MPC_Agent:
             jerk = pred_action_seq[:,2:,:] - 2* pred_action_seq[:,1:-1,:] + pred_action_seq[:,:-2,:]
             jerk_loss = torch.mean(jerk **2)   
 
-            energy_loss = torch.mean(abs(pred_action_seq)**2)
-            # print(delta_action.shape)
-            # print(action_smooth_loss)
-
-            # print(jerk.shape)
-            # print(jerk_loss)
+            energy_loss = torch.mean(pred_action_seq**2)
 
             total_loss = actor_loss + self.smooth_weight*action_smooth_loss + self.jerk_weight * jerk_loss + 0.0 *energy_loss
             #use hybre loss for teacher forcing

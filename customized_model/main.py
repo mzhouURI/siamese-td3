@@ -80,8 +80,8 @@ class MPCROS(Node):
                                 modeler_ckpt = 'offline_model/modeler.pth',
                                 actor_lr = 1e-6, modeler_lr= 1e-6, policy_delay=5,
                                 noise_std=0.05, max_action = 0.7,
-                                pitch_loss_weight = 10, depth_loss_weight =1, surge_loss_weight =5, yaw_loss_weight =1,
-                                smooth_loss_weight =0.1, jerk_loss_weight = 0.1, total_action_weight = 0.1)
+                                pitch_loss_weight = 5, depth_loss_weight =1, surge_loss_weight =5, yaw_loss_weight =1,
+                                smooth_loss_weight =1.0, jerk_loss_weight = 2.0)
 
         torch.autograd.set_detect_anomaly(True)
         self.timer_setpoint_update = self.create_timer(100, self.set_point_update)
