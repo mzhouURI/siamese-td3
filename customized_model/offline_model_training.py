@@ -7,8 +7,8 @@ from network.utilites import LoadData, GetData
 
 
 ###load data into batches
-seq_len = 50       # sequence length for transformer
-batch_size = 128    # number of sequences per batch
+seq_len = 100       # sequence length for transformer
+batch_size =32    # number of sequences per batch
 num_epochs = 20    # how many passes over the dataset
 train_loader, val_loader, state_dim, error_dim, action_dim = LoadData("offline_data/filename1.csv", 0.2, batch_size, seq_len)
 
@@ -20,7 +20,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #                  ).to(device)
 
 model = VehicleModeler(state_dim = state_dim, action_dim = action_dim,
-                 d_model = 256, nhead = 2, num_layers = 2,
+                 d_model = 256, nhead = 8, num_layers = 2,
                  ).to(device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, amsgrad = True)
@@ -61,48 +61,48 @@ for epoch in range(num_epochs):
     model.eval()
     batch_count = 1
 
-    with torch.no_grad():
-        for batch in val_loader:
-            batch = batch.to(device)
-            initial_state, _, _, new_state_seq, _, _, action_seq, _=GetData(batch, state_dim, error_dim, action_dim)
+    # with torch.no_grad():
+    #     for batch in val_loader:
+    #         batch = batch.to(device)
+    #         initial_state, _, _, new_state_seq, _, _, action_seq, _=GetData(batch, state_dim, error_dim, action_dim)
 
-            zero_depth_initial_state = initial_state.clone()
-            zero_depth_initial_state[:,:,0] = 0
+    #         zero_depth_initial_state = initial_state.clone()
+    #         zero_depth_initial_state[:,:,0] = 0
 
-            pred_new_state_seq = model(zero_depth_initial_state, action_seq)
-            #add depth back to prediction
-            pred_new_state_seq [:,:,0] = pred_new_state_seq[:,:,0] + initial_state[:,:,0]
-            #compare predicted depth to the actual depth
-            total_val_loss += nn.MSELoss(reduction="sum")(new_state_seq, pred_new_state_seq).item()
-            batch_count += 1
+    #         pred_new_state_seq = model(zero_depth_initial_state, action_seq)
+    #         #add depth back to prediction
+    #         pred_new_state_seq [:,:,0] = pred_new_state_seq[:,:,0] + initial_state[:,:,0]
+    #         #compare predicted depth to the actual depth
+    #         total_val_loss += nn.MSELoss(reduction="sum")(new_state_seq, pred_new_state_seq).item()
+    #         batch_count += 1
 
-            #display
-            if (epoch % 10 == 0) and (batch_count >1) and (batch_count <3) and (epoch>3):
-            # if (epoch >35) and (batch_count >1) and (batch_count <3):
+    #         #display
+    #         if (epoch % 10 == 0) and (batch_count >1) and (batch_count <3) and (epoch>3):
+    #         # if (epoch >35) and (batch_count >1) and (batch_count <3):
 
-                for i in range(state_dim):
-                    flat_pred = pred_new_state_seq.reshape(-1, state_dim)
-                    flat_actual = new_state_seq.reshape(-1, state_dim)
-                    plt.plot(flat_pred[:,i].detach().cpu().numpy(), label='Label (optional)', color='blue', linestyle='None', marker='o')  # Customize as needed
-                    plt.plot(flat_actual[:,i].detach().cpu().numpy(), label='Label (optional)', color='red', linestyle='None', marker='o')  # Customize as needed
-                    plt.show()
-                #pich and row angle compare
-                fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(12, 5))  # Adjust figsize as needed
-                pre_roll = torch.atan2(flat_pred[:,2], flat_pred[:,1])
-                actual_roll = torch.atan2(flat_actual[:,2], flat_actual[:,1])
-                ax1.plot(pre_roll.detach().cpu().numpy(), label='Label (optional)', color='red', linestyle='None', marker='o')  # Customize as needed
-                ax1.plot(actual_roll.detach().cpu().numpy(), label='Label (optional)', color='blue', linestyle='None', marker='o')  # Customize as needed
+    #             for i in range(state_dim):
+    #                 flat_pred = pred_new_state_seq.reshape(-1, state_dim)
+    #                 flat_actual = new_state_seq.reshape(-1, state_dim)
+    #                 plt.plot(flat_pred[:,i].detach().cpu().numpy(), label='Label (optional)', color='blue', linestyle='None', marker='o')  # Customize as needed
+    #                 plt.plot(flat_actual[:,i].detach().cpu().numpy(), label='Label (optional)', color='red', linestyle='None', marker='o')  # Customize as needed
+    #                 plt.show()
+    #             #pich and row angle compare
+    #             fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(12, 5))  # Adjust figsize as needed
+    #             pre_roll = torch.atan2(flat_pred[:,2], flat_pred[:,1])
+    #             actual_roll = torch.atan2(flat_actual[:,2], flat_actual[:,1])
+    #             ax1.plot(pre_roll.detach().cpu().numpy(), label='Label (optional)', color='red', linestyle='None', marker='o')  # Customize as needed
+    #             ax1.plot(actual_roll.detach().cpu().numpy(), label='Label (optional)', color='blue', linestyle='None', marker='o')  # Customize as needed
 
-                pre_pitch = torch.atan2(flat_pred[:,4], flat_pred[:,3])
-                actual_pitch = torch.atan2(flat_actual[:,4], flat_actual[:,3])
-                ax2.plot(pre_pitch.detach().cpu().numpy(), label='Label (optional)', color='red', linestyle='None', marker='o')  # Customize as needed
-                ax2.plot(actual_pitch.detach().cpu().numpy(), label='Label (optional)', color='blue', linestyle='None', marker='o')  # Customize as needed
+    #             pre_pitch = torch.atan2(flat_pred[:,4], flat_pred[:,3])
+    #             actual_pitch = torch.atan2(flat_actual[:,4], flat_actual[:,3])
+    #             ax2.plot(pre_pitch.detach().cpu().numpy(), label='Label (optional)', color='red', linestyle='None', marker='o')  # Customize as needed
+    #             ax2.plot(actual_pitch.detach().cpu().numpy(), label='Label (optional)', color='blue', linestyle='None', marker='o')  # Customize as needed
                 
-                pre_yaw = torch.atan2(flat_pred[:,6], flat_pred[:,5])
-                actual_yaw = torch.atan2(flat_actual[:,6], flat_actual[:,5])
-                ax3.plot(pre_yaw.detach().cpu().numpy(), label='Label (optional)', color='red', linestyle='None', marker='o')  # Customize as needed
-                ax3.plot(actual_yaw.detach().cpu().numpy(), label='Label (optional)', color='blue', linestyle='None', marker='o')  # Customize as needed
-                plt.show()
+    #             pre_yaw = torch.atan2(flat_pred[:,6], flat_pred[:,5])
+    #             actual_yaw = torch.atan2(flat_actual[:,6], flat_actual[:,5])
+    #             ax3.plot(pre_yaw.detach().cpu().numpy(), label='Label (optional)', color='red', linestyle='None', marker='o')  # Customize as needed
+    #             ax3.plot(actual_yaw.detach().cpu().numpy(), label='Label (optional)', color='blue', linestyle='None', marker='o')  # Customize as needed
+    #             plt.show()
 
             
     # Compute mean losses
@@ -128,4 +128,4 @@ for epoch in range(num_epochs):
 # plt.ioff()  # Turn off interactive mode at the end
 # plt.show()
 
-torch.save(model.state_dict(), "modeler.pth")
+    torch.save(model.state_dict(), "offline_model/modeler.pth")

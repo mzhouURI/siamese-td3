@@ -8,8 +8,8 @@ from torch.utils.data import Dataset, DataLoader, Subset, random_split
 from network.utilites import LoadData, GetData, safe_atan2
 
 ###load data into batches
-seq_len = 50       # sequence length for transformer
-batch_size = 128    # number of sequences per batch
+seq_len = 100       # sequence length for transformer
+batch_size = 8    # number of sequences per batch
 num_epochs = 20    # how many passes over the dataset
 train_loader, val_loader, state_dim, error_dim, action_dim = LoadData("offline_data/filename1.csv", 0.2, batch_size, seq_len)
 
@@ -20,7 +20,7 @@ print("Using device:", device)
 #                         hidden_dim = 256, rnn_layers = 2,
 #                         ).to(device)
 model = VehicleActor(state_dim = state_dim+error_dim, action_dim = action_dim,
-                        d_model = 256, nhead = 2, num_layers=2,
+                        d_model = 256, nhead = 8, num_layers=2, max_action= 0.7
                         ).to(device)
 loss_fn = nn.MSELoss(reduction = 'mean')
 
@@ -29,9 +29,9 @@ loss_fn = nn.MSELoss(reduction = 'mean')
 #                  ).to(device)
 
 Vmodel = VehicleModeler(state_dim = state_dim, action_dim = action_dim,
-                 d_model = 256, nhead = 2, num_layers = 2,
+                 d_model = 256, nhead = 8, num_layers = 2,
                  ).to(device)
-Vmodel.load_state_dict(torch.load('modeler.pth', map_location=device))
+Vmodel.load_state_dict(torch.load('offline_model/modeler.pth', map_location=device))
 
 for param in Vmodel.parameters():
     param.requires_grad = False
@@ -71,9 +71,11 @@ for epoch in range(num_epochs):
     for batch in train_loader:
         batch = batch.to(device)  # shape: (batch_size, seq_len, input_dim + action_dim)
         initial_state, initial_error_state, \
-        state_seq, _, error_state_seq, _, _, _=GetData(batch, state_dim, error_dim, action_dim)
+        state_seq, _, error_state_seq, new_error_state_seq, action_seq, _=GetData(batch, state_dim, error_dim, action_dim)
         
-        
+        ############################################################
+        ############## model based ######################
+        ############################################################
         ##restore desired state from state seq and error_state_seq
         c_depth = error_state_seq[:,:,ind_e_z] + state_seq[:,:,ind_s_z]
         c_u = error_state_seq[:,:,ind_e_u] + state_seq[:, : ,ind_s_u]
@@ -113,8 +115,6 @@ for epoch in range(num_epochs):
         pred_states = Vmodel(zero_depth_initial_state, pred_actions)
         pred_states [:,:,0] = pred_states[:,:,0] + initial_state[:,:,0]
 
-
-
         ##Predicted state
         p_depth = pred_states[:,:,ind_s_z]
         p_u = pred_states[:, : ,ind_s_u]
@@ -138,10 +138,33 @@ for epoch in range(num_epochs):
 
         pred_e = torch.stack([pred_e_depth, 10*pred_e_pitch, pred_e_yaw, 5*pred_e_u ], dim = -1)
 
-        loss = torch.mean(pred_e**2)
+
+        delta_action = pred_actions[:,1:,:] - pred_actions[:,:-1,:]
+        action_smooth_loss = torch.sum(delta_action **2)
+
+
+        jerk = pred_actions[:,2:,:] - 2* pred_actions[:,1:-1,:] + pred_actions[:,:-2,:]
+        jerk_loss = torch.sum(jerk **2)   
+        
+        actor_loss = torch.mean(pred_e**2)
+
+        total_loss = actor_loss #+ 0.1*action_smooth_loss + 0.1 * jerk_loss
+
+        ############################################################
+        ############## techer force based ######################
+        ############################################################
+        # action_miss =  pred_actions - action_seq
+        # action_loss = torch.sum(action_miss **2)
+
+        # state_loss = torch.sum(new_error_state_seq **2 )
+
+        # total_loss = action_loss + state_loss
+        ############################################################
+        ############################################################
+
         # print(loss.item())
         optimizer.zero_grad()
-        loss.backward()
+        total_loss.backward()
         for name, param in Vmodel.named_parameters():
             if param.requires_grad:
                 print(f"{name} can be updated")  # Should not print anything
@@ -166,7 +189,7 @@ for epoch in range(num_epochs):
 
         batch_count += 1
         
-        total_train_loss += loss.item()
+        total_train_loss += total_loss.item()
 
     # --- VALIDATION ---
     # model.eval()
@@ -222,4 +245,4 @@ for epoch in range(num_epochs):
 # plt.ioff()  # Turn off interactive mode at the end
 # plt.show()
 
-torch.save(model.state_dict(), "actor.pth")
+    torch.save(model.state_dict(), "offline_model/actor.pth")

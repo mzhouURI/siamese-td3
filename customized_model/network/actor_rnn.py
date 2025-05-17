@@ -5,9 +5,11 @@ import torch.nn as nn
 #output a sequence of future actions
 
 class VehicleActor(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_dim, rnn_layers):
+    def __init__(self, state_dim, action_dim, hidden_dim, rnn_layers, max_action =1):
         super().__init__()
         self.action_dim = action_dim
+        self.max_action = max_action
+
         input_dim = state_dim  # Input: state, command, prev_action
         self.fc_pre = nn.Linear(input_dim,hidden_dim)
         self.lstm = nn.LSTM(hidden_dim, hidden_dim, num_layers=rnn_layers, batch_first=True)
@@ -34,9 +36,8 @@ class VehicleActor(nn.Module):
         x = self.fc_pre(x)
 
         for t in range(seq_len):
-            # x = torch.cat([state, action], dim=-1)  # [B, D]
             out,h = self.lstm(x, h)
-            action = torch.tanh(self.fc(out))  # Predict action_t
+            action = self.max_action * torch.tanh(self.fc(out))  # Predict action_t
             action_seq.append(action)
 
         return torch.cat(action_seq, dim=1)  # [B, T, action_dim]

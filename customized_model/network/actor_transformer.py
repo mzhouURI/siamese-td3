@@ -5,12 +5,12 @@ from network.utilites import PositionalEncoding
 #output a sequence of future actions
 
 class VehicleActor(nn.Module):
-    def __init__(self, state_dim, action_dim, d_model=128, nhead=4, num_layers=3, dropout=0.1):
+    def __init__(self, state_dim, action_dim, d_model=128, nhead=4, num_layers=3, dropout=0.1, max_action=1):
         super().__init__()
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.d_model = d_model
-
+        self.max_action = max_action
         # Positional encoding
         # self.pos_encoding = nn.Parameter(torch.randn(1, 10000, d_model))  # Max seq length = 1000
         self.pos_encoding = PositionalEncoding(d_model)
@@ -48,7 +48,7 @@ class VehicleActor(nn.Module):
 
         # Decode into future states
         action_seq = self.state_decoder(x)  # [B, T, state_dim]
-        action_seq = torch.tanh(action_seq)
+        action_seq = self.max_action*torch.tanh(action_seq)
         # if torch.isnan(self.state_encoder.weight).any():
         #     print("NaN detected in pred_states!")
         #     exit()

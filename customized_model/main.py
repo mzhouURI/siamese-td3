@@ -10,7 +10,7 @@ from scipy.spatial.transform import Rotation as R
 from std_msgs.msg import Float64, Float64MultiArray
 import torch
 import collections
-from agent import RL_MPC_Agent
+from network.agent import RL_MPC_Agent
 from network.utilites import flatten_state
 
 class MPCROS(Node):
@@ -45,7 +45,7 @@ class MPCROS(Node):
         ##setting mode
         self.training = True
         self.training_episode = 0
-        self.batch_size = 128
+        self.batch_size = 8
         self.batch_warmup_size =self.batch_size*1
         self.set_point_update_flag = False
         state = {
@@ -65,7 +65,9 @@ class MPCROS(Node):
         self.prev_action = torch.zeros(1,4)
         self.prev_error_state = torch.zeros(1,len(self.error_state))
         self.prev_state = torch.zeros(1,len(self.state))
-        self.window_size = 50
+        self.window_size = 100
+
+        self.performance = 0
 
         self.state_buffer = collections.deque(maxlen=self.window_size)
         self.error_state_buffer = collections.deque(maxlen=self.window_size)
@@ -73,11 +75,13 @@ class MPCROS(Node):
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = RL_MPC_Agent(state_dim = len(self.state), error_dim = len(self.error_state), action_dim = 4,
-                                hidden_dim = 256, num_layers = 2, num_head= 2, device = self.device,
+                                hidden_dim = 256, num_layers = 2, num_head= 8, device = self.device,
                                 actor_ckpt = 'offline_model/actor.pth',
                                 modeler_ckpt = 'offline_model/modeler.pth',
-                                actor_lr = 1e-6, modeler_lr= 1e-6, policy_delay=10,
-                                noise_std=0.05)
+                                actor_lr = 1e-6, modeler_lr= 1e-6, policy_delay=5,
+                                noise_std=0.05, max_action = 0.7,
+                                pitch_loss_weight = 10, depth_loss_weight =1, surge_loss_weight =5, yaw_loss_weight =1,
+                                smooth_loss_weight =0.1, jerk_loss_weight = 0.1, total_action_weight = 0.1)
 
         torch.autograd.set_detect_anomaly(True)
         self.timer_setpoint_update = self.create_timer(100, self.set_point_update)
@@ -100,6 +104,11 @@ class MPCROS(Node):
 
     def set_point_update(self):
         self.model.save_model()
+        print(f"episode reward = {self.performance}")
+        self.model.save_model()
+        msg = Float64()
+        msg.data = float (self.performance)
+        self.total_reward_pub.publish(msg)
         #update setpoint
         self.set_point.position.z = random.uniform(-5,-1)
         self.set_point.orientation.z = random.uniform(-3.14, 3.14)
@@ -163,13 +172,15 @@ class MPCROS(Node):
         self.prev_error_state = new_error_state
         self.prev_action = action
         
-        if len(self.model.replay_buffer.buffer) > self.batch_warmup_size*1.2:
+        if len(self.model.replay_buffer.buffer) > self.batch_warmup_size + self.window_size:
             c1_loss, actor_loss = self.model.train(batch_size=self.batch_size, sequence_len = self.window_size)
             msg = Float64MultiArray()
             msg.data = [float(c1_loss), float(actor_loss)]
             self.loss_pub.publish(msg)
 
+        self.performance = self.performance + torch.abs(new_error_state).sum()
 
+   
 def main(args=None):
 
     rclpy.init(args=args)

@@ -6,10 +6,10 @@ import random
 from collections import deque
 import numpy as np
 import copy
-from modeler_transformer import VehicleModeler
-from actor_transformer import VehicleActor
+from network.modeler_transformer import VehicleModeler
+from network.actor_transformer import VehicleActor
 import itertools
-from utilites import safe_atan2
+from network.utilites import safe_atan2
 
 
 class ReplayBuffer:
@@ -43,12 +43,20 @@ class RL_MPC_Agent:
                  actor_ckpt = None, modeler_ckpt = None,
                  hidden_dim = 32, num_layers = 2, num_head =4,
                  actor_lr=1e-4, modeler_lr=1e-3, 
-                 tau=0.005, gamma=0.99, noise_std=0.2, policy_delay=2):
-       
+                 tau=0.005, gamma=0.99, noise_std=0.2, policy_delay=2,
+                 pitch_loss_weight = 1, depth_loss_weight =1, surge_loss_weight =1, yaw_loss_weight =1,
+                 smooth_loss_weight =0.1, jerk_loss_weight = 0.1):
+        
+        self.pitch_weight = pitch_loss_weight
+        self.depth_weight = depth_loss_weight
+        self.surge_weight = surge_loss_weight
+        self.yaw_weight = yaw_loss_weight
+        self.smooth_weight = smooth_loss_weight
+        self.jerk_weight = jerk_loss_weight
         # Initialize actor
         self.actor = VehicleActor(state_dim = state_dim+error_dim, action_dim = action_dim,
                                       d_model = hidden_dim, nhead = num_head,
-                                      num_layers = num_layers).to(device)
+                                      num_layers = num_layers, max_action = max_action).to(device)
         if actor_ckpt is not None:
             self.actor.load_state_dict(torch.load(actor_ckpt, map_location=device))
             print(f"Loaded actor weights from {actor_ckpt}")
@@ -142,10 +150,12 @@ class RL_MPC_Agent:
         
         #predict two sequence of future states
         model_pred = self.modeler.forward(zero_depth_initial_state, action_seq)
+        # model_pred = self.target_modeler.forward(zero_depth_initial_state, action_seq)
+
         #add depth back
         model_pred [:,:,0] = model_pred[:,:,0] + initial_state[:,:,0]
 
-        modeler_loss = nn.MSELoss()(model_pred, new_state_seq)
+        modeler_loss = nn.MSELoss(reduction= "sum")(model_pred, new_state_seq)
         
         # Backpropagate and update critic networks
         self.modeler_optimizer.zero_grad()
@@ -199,8 +209,12 @@ class RL_MPC_Agent:
             actor_states= torch.cat([zero_depth_initial_state, initial_error_state], dim = 2)
 
             pred_action_seq= self.actor.forward(actor_states, sequence_len) 
+            # pred_action_seq= self.target_actor.forward(actor_states, sequence_len) 
+
             #using model
-            pred_states = self.modeler.forward(zero_depth_initial_state, pred_action_seq)
+            # pred_states = self.modeler.forward(zero_depth_initial_state, pred_action_seq)
+            pred_states = self.target_modeler.forward(zero_depth_initial_state, pred_action_seq)
+
 
             #add initial depth back
             pred_states [:,:,0] = pred_states[:,:,0] + initial_state[:,:,0]
@@ -232,13 +246,43 @@ class RL_MPC_Agent:
             #error between desired and the predicted states
             # pred_e_pitch = 1*pred_e_pitch
             # pred_e_u = 5*pred_e_u
-            pred_e = torch.stack([pred_e_depth, pred_e_pitch, pred_e_yaw, pred_e_u ], dim = -1)
+            pred_e = torch.stack([self.depth_weight*pred_e_depth, 
+                                  self.pitch_weight*pred_e_pitch, 
+                                  self.yaw_weight*pred_e_yaw, 
+                                  self.surge_weight*pred_e_u ], dim = -1)
                 
-            actor_loss = torch.mean(pred_e**2)
-            print(actor_loss.item())
+            actor_loss = torch.mean(pred_e**2) 
+
+            delta_action = pred_action_seq[:,1:,:] - pred_action_seq[:,:-1,:]
+            action_smooth_loss = torch.mean(delta_action **2)
+
+
+            jerk = pred_action_seq[:,2:,:] - 2* pred_action_seq[:,1:-1,:] + pred_action_seq[:,:-2,:]
+            jerk_loss = torch.mean(jerk **2)   
+
+            energy_loss = torch.mean(abs(pred_action_seq)**2)
+            # print(delta_action.shape)
+            # print(action_smooth_loss)
+
+            # print(jerk.shape)
+            # print(jerk_loss)
+
+            total_loss = actor_loss + self.smooth_weight*action_smooth_loss + self.jerk_weight * jerk_loss + 0.0 *energy_loss
+            #use hybre loss for teacher forcing
+            # delta_action = action_seq - pred_action_seq
+            # actor_loss = torch.sum(delta_action **2) + torch.sum(new_error_seq**2)
+            # print(actor_loss.item())
             self.actor_optimizer.zero_grad()
-            actor_loss.backward()
+            total_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=1.0)
             self.actor_optimizer.step()
 
-            return modeler_loss.item(), actor_loss.item()
+             # Soft update target networks
+            for target_param, param in zip(self.target_actor.parameters(), self.actor.parameters()):
+                target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+        
+
+        for target_param, param in zip(self.target_modeler.parameters(), self.modeler.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        return modeler_loss.item(), actor_loss.item()
