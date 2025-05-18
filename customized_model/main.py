@@ -21,6 +21,8 @@ class MPCROS(Node):
         
         self.subscription = self.create_subscription(ControlProcess, '/mvp2_test_robot/controller/process/value', self.state_callback, 1)
         self.subscription2 = self.create_subscription(ControlProcess, '/mvp2_test_robot/controller/process/error', self.state_error_callback, 1)
+        # self.subscription3 = self.create_subscription(ControlProcess, '/mvp2_test_robot/controller/process/set_point', self.set_point_callback, 1)
+
 
         self.set_point_pub = self.create_publisher(ControlProcess, '/mvp2_test_robot/controller/process/set_point', 3)
         self.thruster_pub = self.create_publisher(Float64MultiArray, '/mvp2_test_robot/stonefish/thruster_command', 5)
@@ -59,29 +61,39 @@ class MPCROS(Node):
             'euler': (0,0,0,0), # Quaternion (x, y, z, w)
             'u': (0)
         }
+        set_point = {
+             'z': (0),
+            'euler': (0,0,0,0), # Quaternion (x, y, z, w)
+            'u': (0)
+        }
         self.state = flatten_state(state)
         self.error_state = flatten_state(error_state)
+        self.set_point_state = flatten_state(set_point)
 
         self.prev_action = torch.zeros(1,4)
         self.prev_error_state = torch.zeros(1,len(self.error_state))
         self.prev_state = torch.zeros(1,len(self.state))
-        self.window_size = 100
+        self.prev_setpoint = torch.zeros(1,len(self.set_point_state))
+        self.window_size = 50
 
         self.performance = 0
 
         self.state_buffer = collections.deque(maxlen=self.window_size)
         self.error_state_buffer = collections.deque(maxlen=self.window_size)
 
+        self.max_action = torch.tensor([0.6, 0.6, 0.5, 0.5])  # example per-dimension limits
+
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = RL_MPC_Agent(state_dim = len(self.state), error_dim = len(self.error_state), action_dim = 4,
-                                hidden_dim = 256, num_layers = 2, num_head= 8, device = self.device,
+                                hidden_dim = 128, num_layers = 2, num_head= 8, device = self.device,
                                 actor_ckpt = 'offline_model/actor.pth',
                                 modeler_ckpt = 'offline_model/modeler.pth',
                                 actor_lr = 1e-6, modeler_lr= 1e-6, policy_delay=5,
-                                noise_std=0.05, max_action = 0.7,
-                                pitch_loss_weight = 5, depth_loss_weight =1, surge_loss_weight =5, yaw_loss_weight =1,
-                                smooth_loss_weight =1.0, jerk_loss_weight = 2.0)
+                                noise_std=0.01, max_action = self.max_action.to(self.device),
+                                pitch_loss_weight = 5, depth_loss_weight =1, surge_loss_weight =8, yaw_loss_weight =2,
+                                smooth_loss_weight =1.0, jerk_loss_weight = 1.0, total_action_weight=0.0,
+                                tau=0.001)
 
         torch.autograd.set_detect_anomaly(True)
         self.timer_setpoint_update = self.create_timer(100, self.set_point_update)
@@ -116,7 +128,18 @@ class MPCROS(Node):
         self.total_reward = 0
         self.set_point_update_flag = True
 
-    
+        cos_pitch = np.cos(self.set_point.orientation.y)
+        sin_pitch = np.sin(self.set_point.orientation.y)
+        cos_yaw = np.cos(self.set_point.orientation.z)
+        sin_yaw = np.sin(self.set_point.orientation.z)
+
+        set_point = {
+            'z': (self.set_point.position.z),
+            'euler': (cos_pitch, sin_pitch, cos_yaw, sin_yaw),  
+            'u': (self.set_point.velocity.x)
+        }
+        self.set_point_state = flatten_state(set_point)
+
     def set_point_publish(self):
         self.set_point_pub.publish(self.set_point)
 
@@ -154,6 +177,7 @@ class MPCROS(Node):
     def step(self):
         new_state = torch.tensor(self.state, dtype=torch.float32).unsqueeze(0)
         new_error_state = torch.tensor(self.error_state, dtype=torch.float32).unsqueeze(0)
+        new_setpoint = torch.tensor(self.set_point_state, dtype=torch.float32).unsqueeze(0)
         #action
         zero_depth_initial_state = new_state.clone()
         zero_depth_initial_state[:,0] = 0
@@ -166,11 +190,12 @@ class MPCROS(Node):
         msg.data = action.detach().cpu().numpy().flatten().tolist()                   
         self.thruster_pub.publish(msg)
         
-        self.model.replay_buffer.add(self.prev_state, new_state, self.prev_error_state, new_error_state, self.prev_action.detach().cpu().numpy())
+        self.model.replay_buffer.add(self.prev_state, new_state, self.prev_error_state, new_error_state, self.prev_setpoint, self.prev_action.detach().cpu().numpy())
   
         self.prev_state = new_state
         self.prev_error_state = new_error_state
         self.prev_action = action
+        self.set_point_state = new_setpoint
         
         if len(self.model.replay_buffer.buffer) > self.batch_warmup_size + self.window_size:
             c1_loss, actor_loss = self.model.train(batch_size=self.batch_size, sequence_len = self.window_size)

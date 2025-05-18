@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from network.actor_transformer import VehicleActor
+# from network.actor_fnn import VehicleActor
 from network.modeler_transformer import VehicleModeler
 import torch
 import torch.nn as nn
@@ -17,19 +18,22 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
 # model = VehicleActor(state_dim = state_dim+error_dim, action_dim = action_dim,
-#                         hidden_dim = 256, rnn_layers = 2,
+#                         hidden_dim = 64, rnn_layers = 2,
 #                         ).to(device)
 model = VehicleActor(state_dim = state_dim+error_dim, action_dim = action_dim,
-                        d_model = 256, nhead = 8, num_layers=2, max_action= 0.7
+                        d_model = 128, nhead = 8, num_layers=2, max_action= 0.7, dropout=0.0
                         ).to(device)
-loss_fn = nn.MSELoss(reduction = 'mean')
+# model = VehicleActor(state_dim = state_dim+error_dim, action_dim = action_dim,
+#                         hidden_dim = 256, seq_len = seq_len, num_layers =3, max_action = 0.7
+#                         ).to(device)
+# loss_fn = nn.MSELoss(reduction = 'mean')
 
 # Vmodel = VehicleModeler(state_dim = state_dim, action_dim = action_dim,
-#                  hidden_dim = 256, rnn_layers = 3,
+#                  hidden_dim = 128, rnn_layers = 2,
 #                  ).to(device)
 
-Vmodel = VehicleModeler(state_dim = state_dim, action_dim = action_dim,
-                 d_model = 256, nhead = 8, num_layers = 2,
+Vmodel = VehicleModeler(state_dim = state_dim, action_dim = action_dim, dropout=0.0,
+                 d_model = 128, nhead = 8, num_layers = 2,
                  ).to(device)
 Vmodel.load_state_dict(torch.load('offline_model/modeler.pth', map_location=device))
 
@@ -70,38 +74,25 @@ for epoch in range(num_epochs):
     batch_count = 0
     for batch in train_loader:
         batch = batch.to(device)  # shape: (batch_size, seq_len, input_dim + action_dim)
-        initial_state, initial_error_state, \
-        state_seq, _, error_state_seq, new_error_state_seq, action_seq, _=GetData(batch, state_dim, error_dim, action_dim)
+        initial_state, initial_error_state, initial_setpoint_state, \
+        state_seq, _, error_state_seq, new_error_state_seq, set_point_seq, action_seq, _=GetData(batch, state_dim, error_dim, action_dim)
         
         ############################################################
         ############## model based ######################
         ############################################################
         ##restore desired state from state seq and error_state_seq
-        c_depth = error_state_seq[:,:,ind_e_z] + state_seq[:,:,ind_s_z]
-        c_u = error_state_seq[:,:,ind_e_u] + state_seq[:, : ,ind_s_u]
+        c_depth = initial_setpoint_state[:,:,ind_e_z] 
+        c_u = initial_setpoint_state[:,:, ind_e_u]
 
-        e_cos_pitch = error_state_seq[:, :, ind_e_cos_pitch]
-        e_sin_pitch = error_state_seq[:, :, ind_e_sin_pitch]
-        e_cos_yaw = error_state_seq[:, :, ind_e_cos_yaw]
-        e_sin_yaw = error_state_seq[:, :, ind_e_sin_yaw]
+        c_sin_pitch = initial_setpoint_state[:,:, ind_e_sin_pitch]
+        c_cos_pitch = initial_setpoint_state[:,:, ind_e_cos_pitch]
 
-        m_cos_pitch = state_seq[:, :, ind_s_cos_pitch]
-        m_sin_pitch = state_seq[:, :, ind_s_sin_pitch]
-        m_cos_yaw = state_seq[:, :, ind_s_cos_yaw]
-        m_sin_yaw = state_seq[:, :, ind_s_sin_yaw]
+        c_sin_yaw = initial_setpoint_state[:,:, ind_e_sin_yaw]
+        c_cos_yaw = initial_setpoint_state[:,:, ind_e_cos_yaw]
 
-        c_sin_pitch = e_sin_pitch*m_cos_pitch + e_cos_pitch*m_sin_pitch
-        c_cos_pitch = e_cos_pitch*m_cos_pitch - e_sin_pitch*m_sin_pitch
-
-        c_sin_yaw = e_sin_yaw*m_cos_yaw + e_cos_yaw*m_sin_yaw
-        c_cos_yaw = e_cos_yaw*m_cos_yaw - e_sin_yaw*m_sin_yaw
-
-        c_pitch = safe_atan2(c_sin_pitch, c_cos_pitch)
-        c_yaw = safe_atan2(c_sin_yaw, c_cos_yaw)
-
-
-        desired_states = torch.stack([c_depth, c_pitch, c_yaw, c_u], dim = -1)
-
+        # plt.plot(torch.atan2(c_sin_yaw, c_cos_yaw).detach().cpu().numpy() )
+        # plt.show()
+        # exit()
         #zero depth for reference
         zero_depth_initial_state = initial_state.clone()
         zero_depth_initial_state[:,:,0] = 0
@@ -136,19 +127,24 @@ for epoch in range(num_epochs):
         pred_e_pitch = safe_atan2(pred_e_sin_pitch, pred_e_cos_pitch)
         pred_e_yaw = safe_atan2(pred_e_sin_yaw, pred_e_cos_yaw)
 
-        pred_e = torch.stack([pred_e_depth, 10*pred_e_pitch, pred_e_yaw, 5*pred_e_u ], dim = -1)
 
+        pred_e = torch.stack([pred_e_depth, 5*pred_e_pitch, 2*pred_e_yaw, 5*pred_e_u ], dim = -1)
+        actor_loss = torch.sum(pred_e**2)
 
-        delta_action = pred_actions[:,1:,:] - pred_actions[:,:-1,:]
-        action_smooth_loss = torch.sum(delta_action **2)
-
-
-        jerk = pred_actions[:,2:,:] - 2* pred_actions[:,1:-1,:] + pred_actions[:,:-2,:]
-        jerk_loss = torch.sum(jerk **2)   
+        #weighted loss
+        # weights = torch.linspace(0.1, 1.0, seq_len).to(device)
+        # weights = weights.view(1, seq_len, 1)
+        # error_term = pred_e**2
+        # weighted_loss = torch.mean(error_term*weights)
+        # delta_action = pred_actions[:,1:,:] - pred_actions[:,:-1,:]
+        # action_smooth_loss = torch.mean(delta_action **2)
+        delta_e = pred_e[:,1:,:] **2 - pred_e[:,:-1,:]**2
+        delta_loss = torch.sum(delta_e)
+        # jerk = pred_actions[:,2:,:] - 2* pred_actions[:,1:-1,:] + pred_actions[:,:-2,:]
+        # jerk_loss = torch.mean(jerk **2)   
         
-        actor_loss = torch.mean(pred_e**2)
-
-        total_loss = actor_loss #+ 0.1*action_smooth_loss + 0.1 * jerk_loss
+        total_loss = 0*delta_loss + actor_loss
+        # total_loss = actor_loss #+ 0.1*action_smooth_loss + 0.1 * jerk_loss
 
         ############################################################
         ############## techer force based ######################
@@ -178,14 +174,14 @@ for epoch in range(num_epochs):
         pre_e_flat = pred_e.reshape(-1, 4)
         # print(pred_e.shape)
 
-        if (epoch % 10 == 0) and (batch_count >1) and (batch_count <3):
-            for i in range(4):
-                dd = pre_e_flat[:,i].detach().cpu().numpy() 
-                # plt.plot(plot_desired_data[:,i].detach().cpu().numpy(), label='Label (optional)', color='blue', linestyle='-', marker='o')  # Customize as needed
-                # plt.plot(plot_predict_data[:,i].detach().cpu().numpy(), label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
-                plt.plot(abs(dd), label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
+        # if (epoch % 2 == 0) and (batch_count >1) and (batch_count <3):
+        #     for i in range(4):
+        #         dd = pre_e_flat[:,i].detach().cpu().numpy() 
+        #         # plt.plot(plot_desired_data[:,i].detach().cpu().numpy(), label='Label (optional)', color='blue', linestyle='-', marker='o')  # Customize as needed
+        #         # plt.plot(plot_predict_data[:,i].detach().cpu().numpy(), label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
+        #         plt.plot(abs(dd), label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
 
-                plt.show()
+        #         plt.show()
 
         batch_count += 1
         

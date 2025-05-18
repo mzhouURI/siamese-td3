@@ -7,9 +7,7 @@ class VehicleModeler(nn.Module):
     def __init__(self, state_dim, action_dim, hidden_dim, rnn_layers=1):
         super().__init__()
         self.input_fc = nn.Linear(state_dim + action_dim, hidden_dim)
-        self.hidden_fc = nn.Linear(hidden_dim,hidden_dim)
-        self.rnn = nn.LSTM(input_size=state_dim + action_dim,hidden_size=hidden_dim, num_layers=rnn_layers, batch_first=True)
-
+        self.rnn = nn.LSTM(input_size=hidden_dim,hidden_size=hidden_dim, num_layers=rnn_layers, batch_first=True)
         self.output_layer = nn.Linear(hidden_dim, state_dim)
         self.layernorm = nn.LayerNorm(state_dim + action_dim)
 
@@ -30,6 +28,7 @@ class VehicleModeler(nn.Module):
             x_t = torch.cat([state, cmd_t], dim=-1)  # (B, 1, input_dim)
             x_t = self.layernorm(x_t)
             x_t = self.input_fc(x_t)
+            # print(x_t.shape)
             out, h = self.rnn(x_t, h)             # (B, 1, hidden_dim)
             delta_state = self.output_layer(out)        # (B, 1, state_dim)
             state = state + delta_state

@@ -27,12 +27,7 @@ class VehicleActor(nn.Module):
         self.state_decoder = nn.Linear(d_model, action_dim)
 
     def forward(self, current_state, seq_len):
-        """
-        current_state: [B, state_dim]
-        action_seq:    [B, T, action_dim]
-        Returns:
-        pred_state_seq: [B, T, state_dim]
-        """
+
         B = current_state.size(0)
         T = seq_len
         current_state = self.layernorm(current_state)
@@ -49,19 +44,5 @@ class VehicleActor(nn.Module):
         # Decode into future states
         action_seq = self.state_decoder(x)  # [B, T, state_dim]
         action_seq = self.max_action*torch.tanh(action_seq)
-        # if torch.isnan(self.state_encoder.weight).any():
-        #     print("NaN detected in pred_states!")
-        #     exit()
-        # with torch.no_grad():
-            # print("current_state stats:", ori_current_state.min().item(), ori_current_state.max().item())
-            # print("current_state stats:", current_state.min().item(), current_state.max().item())
-            # print("encoded state:", state_token.min().item(), state_token.max().item())
-            # print("after pos_encoding:", x.min().item(), x.max().item())
-            # print("after transformer:", x.min().item(), x.max().item())
-            # print("final output before tanh:", action_seq.min().item(), action_seq.max().item())
-            # print("has nan:", torch.isnan(action_seq).any().item())
-            # print("Any NaNs in state_encoder weights?", torch.isnan(self.state_encoder.weight).any())
-            # print("Any Infs in state_encoder weights?", torch.isinf(self.state_encoder.weight).any())
-            # print("Any NaNs in bias?", torch.isnan(self.state_encoder.bias).any())
 
         return action_seq

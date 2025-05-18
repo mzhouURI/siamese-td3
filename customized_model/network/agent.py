@@ -16,8 +16,8 @@ class ReplayBuffer:
     def __init__(self, size=100000):
         self.buffer = deque(maxlen=size)
 
-    def add(self, s, ns, e, ne, a):
-        self.buffer.append((s, ns, e, ne, a))
+    def add(self, s, ns, e, ne, c, a):
+        self.buffer.append((s, ns, e, ne, c, a))
 
     
     def sample_sequence(self, sequence_length, batch_size):
@@ -32,11 +32,11 @@ class ReplayBuffer:
             sequences.append(seq)
     
         # Reshape and return as torch tensors
-        s, ns, e, ne, a = map(
+        s, ns, e, ne, c, a = map(
             lambda x: torch.FloatTensor(np.stack(x)),
             zip(*[zip(*seq) for seq in sequences])  # Transpose list of sequences
         )
-        return s, ns, e, ne, a
+        return s, ns, e, ne, c, a
 
 class RL_MPC_Agent:
     def __init__(self, state_dim, error_dim, action_dim, max_action = 1, device = 'cpu',
@@ -45,7 +45,7 @@ class RL_MPC_Agent:
                  actor_lr=1e-4, modeler_lr=1e-3, 
                  tau=0.005, gamma=0.99, noise_std=0.2, policy_delay=2,
                  pitch_loss_weight = 1, depth_loss_weight =1, surge_loss_weight =1, yaw_loss_weight =1,
-                 smooth_loss_weight =0.1, jerk_loss_weight = 0.1):
+                 smooth_loss_weight =0.1, jerk_loss_weight = 0.1, total_action_weight = 0):
         
         self.pitch_weight = pitch_loss_weight
         self.depth_weight = depth_loss_weight
@@ -53,6 +53,7 @@ class RL_MPC_Agent:
         self.yaw_weight = yaw_loss_weight
         self.smooth_weight = smooth_loss_weight
         self.jerk_weight = jerk_loss_weight
+        self.total_action_weight = total_action_weight
         # Initialize actor
         self.actor = VehicleActor(state_dim = state_dim+error_dim, action_dim = action_dim,
                                       d_model = hidden_dim, nhead = num_head,
@@ -126,17 +127,20 @@ class RL_MPC_Agent:
 
     def train(self, batch_size = 64, sequence_len = 20):
         batch = self.replay_buffer.sample_sequence(sequence_len, batch_size)
-        state_seq, new_state_seq, error_seq, new_error_seq, action_seq = batch
+        state_seq, new_state_seq, error_seq, new_error_seq, set_point, action_seq = batch
 
         state_seq = state_seq.to(self.device).float()
         error_seq = error_seq.to(self.device).float()
         action_seq = action_seq.to(self.device).float()
         new_state_seq = new_state_seq.to(self.device).float()
+        set_point = set_point.to(self.device).float()
         
         state_seq = state_seq.squeeze(2)
         new_state_seq = new_state_seq.squeeze(2)
         error_seq = error_seq.squeeze(2)
         action_seq = action_seq.squeeze(2)
+        set_point = set_point.squeeze(2)
+
         
         # Train modeler
   
@@ -181,28 +185,21 @@ class RL_MPC_Agent:
             ind_s_sin_yaw = 6
             ind_s_u = 7
             ind_s_z = 0
+
+            initial_setpoint = set_point[:,0,:]
+            initial_setpoint = initial_setpoint.unsqueeze(1)
             # Actor loss (maximize Q from critic1)
             #only update using the modeler output
             ##get the desired state
-            c_depth = error_seq[:,:,ind_e_z] + state_seq[:,:,ind_s_z]
-            c_u = error_seq[:,:,ind_e_u] + state_seq[:, : ,ind_s_u]
+            c_depth = initial_setpoint[:,:,ind_e_z]
+            c_u = initial_setpoint[:,:,ind_e_u]
 
-            e_cos_pitch = error_seq[:, :, ind_e_cos_pitch]
-            e_sin_pitch = error_seq[:, :, ind_e_sin_pitch]
-            e_cos_yaw = error_seq[:, :, ind_e_cos_yaw]
-            e_sin_yaw = error_seq[:, :, ind_e_sin_yaw]
+            c_cos_pitch = initial_setpoint[:, :, ind_e_cos_pitch]
+            c_sin_pitch = initial_setpoint[:, :, ind_e_sin_pitch]
+            c_cos_yaw = initial_setpoint[:, :, ind_e_cos_yaw]
+            c_sin_yaw = initial_setpoint[:, :, ind_e_sin_yaw]
 
-            m_cos_pitch = state_seq[:, :, ind_s_cos_pitch]
-            m_sin_pitch = state_seq[:, :, ind_s_sin_pitch]
-            m_cos_yaw = state_seq[:, :, ind_s_cos_yaw]
-            m_sin_yaw = state_seq[:, :, ind_s_sin_yaw]
-
-            c_sin_pitch = e_sin_pitch*m_cos_pitch + e_cos_pitch*m_sin_pitch
-            c_cos_pitch = e_cos_pitch*m_cos_pitch - e_sin_pitch*m_sin_pitch
-
-            c_sin_yaw = e_sin_yaw*m_cos_yaw + e_cos_yaw*m_sin_yaw
-            c_cos_yaw = e_cos_yaw*m_cos_yaw - e_sin_yaw*m_sin_yaw
-
+            # print(torch.atan2(c_sin_pitch, c_cos_pitch))
             initial_error_state = error_seq[:,0,:] 
             initial_error_state = initial_error_state.unsqueeze(1)
             
@@ -213,7 +210,7 @@ class RL_MPC_Agent:
 
             #using model
             # pred_states = self.modeler.forward(zero_depth_initial_state, pred_action_seq)
-            pred_states = self.target_modeler.forward(zero_depth_initial_state, pred_action_seq)
+            pred_states = self.modeler.forward(zero_depth_initial_state, pred_action_seq)
 
 
             #add initial depth back
@@ -250,22 +247,31 @@ class RL_MPC_Agent:
                                   self.pitch_weight*pred_e_pitch, 
                                   self.yaw_weight*pred_e_yaw, 
                                   self.surge_weight*pred_e_u ], dim = -1)
-                
-            actor_loss = torch.mean(pred_e**2) 
+            
+
+            weights = torch.linspace(0.1, 1.0, sequence_len).to(self.device)
+            weights = weights.view(1, sequence_len, 1)
+            # print(weights.shape)
+            error_term = pred_e**2
+            # weighted_loss = (error_term.sum(dim=-1).pred_e.shape[0] * weights).mean()
+            weighted_loss = torch.sum(error_term*weights)
+            
+
+            actor_loss = torch.sum(pred_e**2) 
 
             delta_action = pred_action_seq[:,1:,:] - pred_action_seq[:,:-1,:]
-            action_smooth_loss = torch.mean(delta_action **2)
+            action_smooth_loss = torch.sum(delta_action **2)
 
 
             jerk = pred_action_seq[:,2:,:] - 2* pred_action_seq[:,1:-1,:] + pred_action_seq[:,:-2,:]
-            jerk_loss = torch.mean(jerk **2)   
+            jerk_loss = torch.sum(jerk **2)   
 
-            energy_loss = torch.mean(pred_action_seq**2)
-
-            total_loss = actor_loss + self.smooth_weight*action_smooth_loss + self.jerk_weight * jerk_loss + 0.0 *energy_loss
+            energy_loss = torch.sum(pred_action_seq**2)
+        
+            total_loss = actor_loss + self.smooth_weight*action_smooth_loss + self.jerk_weight * jerk_loss + self.total_action_weight *energy_loss
             #use hybre loss for teacher forcing
             # delta_action = action_seq - pred_action_seq
-            # actor_loss = torch.sum(delta_action **2) + torch.sum(new_error_seq**2)
+            # total_loss = torch.sum(delta_action **2) + torch.sum(new_error_seq**2)  +jerk_loss
             # print(actor_loss.item())
             self.actor_optimizer.zero_grad()
             total_loss.backward()

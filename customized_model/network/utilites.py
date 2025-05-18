@@ -16,99 +16,82 @@ class SequenceDataset(Dataset):
         # Returns a sequence of length `seq_len`
         sequence = self.data[idx:idx + self.seq_len]
         return torch.tensor(sequence, dtype=torch.float32)
+    
+def get_cos_sin(data, ind):
+    ang = data[:, ind]
+    cos_ang = np.cos(ang)
+    sin_ang = np.sin(ang)
+    return np.column_stack((cos_ang,sin_ang))
 
 def LoadData(filename, val_ratio, batch_size, seq_len):
     data = np.loadtxt(filename, delimiter=',')
+    # print(data.shape)
+    # exit()
     # 0:12: t, ex, ey, ez, e_roll, e_pitch, e_yaw, e_u, e_v, e_w, e_p, e_q, e_r
     #13-15: x,y,z,
     #16:18: roll, pitch, yaw, 
     #19:24 u,v,w,p,q,r
-    pitch = data[:-1,17]
-    yaw = data[:-1,18]
-    roll = data[:-1,16]
-    cos_pitch = np.cos(pitch)
-    sin_pitch = np.sin(pitch)
-    cos_yaw = np.cos(yaw)
-    sin_yaw = np.sin(yaw)
-    cos_roll = np.cos(roll)
-    sin_roll = np.sin(roll)
+    #25:27 c_x,c_y, c_z
+    #28:30 c_roll, c_pitch, c_yaw
+    #31:33 c_u, c_v, c_w
+    #34:36 c_p, c_q, c_r
+    #37:40 actions
+
+    ##get action and new actions
+    current_action = data[:-1, -4:]
+    action_seq = data[1:, -4:]
+    
+    ###get regular states
+    cs_roll = get_cos_sin(data, 16)
+    cs_pitch = get_cos_sin(data,17)
+    cs_yaw = get_cos_sin(data, 18)
     # Remove pitch and yaw columns from `states`
     base_states = data[:-1, [15, 19, 20, 21, 22, 23, 24]]
     # Trim cos/sin arrays to match states shape (one less row due to data[:-1])
     # Stack new states: [x, cos_pitch, sin_pitch, cos_yaw, sin_yaw, z, vx, vy]
     states = np.column_stack((base_states[:, 0],   # col 15 (x)
-                            cos_roll,
-                            sin_roll,
-                            cos_pitch,
-                            sin_pitch,
-                            cos_yaw,
-                            sin_yaw,
+                            cs_roll[:-1,:],
+                            cs_pitch[:-1,:],
+                            cs_yaw[:-1,:],
                             base_states[:, 1:],  # cols 19, 23, 24 (z, vx, vy)
                             ))
-
+    
+    base_state_seq = data[1:,[15, 19, 20, 21, 22, 23, 24]]
+    state_seq = np.column_stack((base_state_seq[:, 0],   # col 15 (x)
+                            cs_roll[1:,:],
+                            cs_pitch[1:,:],
+                            cs_yaw[1:,:],
+                            base_state_seq[:, 1:],  # cols 19, 23, 24 (z, vx, vy)
+                            ))
+    ##get set points
+    cs_pitch = get_cos_sin(data,29)
+    cs_yaw = get_cos_sin(data, 30)
+    setpoint_base_states = data[:-1, [27, 31]]
+    set_point_seq = np.column_stack((setpoint_base_states[:, 0],   # col 15 (x)
+                                cs_pitch[:-1:,:],
+                                cs_yaw[:-1:,:],
+                                setpoint_base_states[:, 1:],  # cols 19, 23, 24 (z, vx, vy)
+                                ))
+    ##get error states
     #depth, pitch, yaw, surge
+    cs_pitch = get_cos_sin(data,5)
+    cs_yaw = get_cos_sin(data, 6)
     error_base_states = data[:-1, [3,7]]
-
-    d_pitch = data[1:,5]
-    d_yaw = data[1:,6]
-    cos_pitch = np.cos(d_pitch)
-    sin_pitch = np.sin(d_pitch)
-    cos_yaw = np.cos(d_yaw)
-    sin_yaw = np.sin(d_yaw)
-
     error_states = np.column_stack((error_base_states[:, 0],   # col 15 (x)
-                            cos_pitch,
-                            sin_pitch,
-                            cos_yaw,
-                            sin_yaw,
+                            cs_pitch[:-1,:],
+                            cs_yaw[:-1,:],
                             error_base_states[:, 1:],  # cols 19, 23, 24 (z, vx, vy)
                             ))
 
-    current_action = data[:-1, -4:]
-    action_seq = data[1:, -4:]
-
-    pitch = data[1:,17]
-    yaw = data[1:,18]
-    roll = data[1:,16]
-
-    cos_pitch = np.cos(pitch)
-    sin_pitch = np.sin(pitch)
-    cos_yaw = np.cos(yaw)
-    sin_yaw = np.sin(yaw)
-    cos_roll = np.cos(roll)
-    sin_roll = np.sin(roll)
-
-    base_state_seq = data[1:,[15, 19, 20, 21, 22, 23, 24]]
-    state_seq = np.column_stack((base_state_seq[:, 0],   # col 15 (x)
-                            cos_roll,
-                            sin_roll,
-                            cos_pitch,
-                            sin_pitch,
-                            cos_yaw,
-                            sin_yaw,
-                            base_state_seq[:, 1:],  # cols 19, 23, 24 (z, vx, vy)
-                            ))
-    
-
     error_base_states_seq = data[1:, [3,7]]
-    
-    d_pitch = data[1:,5]
-    d_yaw = data[1:,6]
-    cos_pitch = np.cos(d_pitch)
-    sin_pitch = np.sin(d_pitch)
-    cos_yaw = np.cos(d_yaw)
-    sin_yaw = np.sin(d_yaw)
-
     error_states_seq = np.column_stack((error_base_states_seq[:, 0],   # col 15 (x)
-                            cos_pitch,
-                            sin_pitch,
-                            cos_yaw,
-                            sin_yaw,
+                            cs_pitch[1:,:],
+                            cs_yaw[1:,:],
                             error_base_states_seq[:, 1:],  # cols 19, 23, 24 (z, vx, vy)
                             ))
 
     # Assuming error_states, states, and actions are already extracted from `data`
-    training_data = np.hstack((states, error_states, state_seq, error_states_seq, current_action, action_seq))
+    training_data = np.hstack((states, error_states, state_seq, error_states_seq, set_point_seq, current_action, action_seq))
 
     state_dim = states.shape[1]
     action_dim = action_seq.shape[1]      
@@ -137,18 +120,25 @@ def GetData(batch, state_dim, error_dim, action_dim):
     initial_error_state = batch[:,0, state_dim:state_dim+error_dim]
     initial_error_state = initial_error_state.unsqueeze(1)
 
+
     state_seq = batch [:, :, :state_dim]
     error_state_seq = batch[:, :, state_dim:state_dim+error_dim]
     new_state_seq = batch[:, :, state_dim+error_dim: 2*state_dim+error_dim]
     new_error_state_seq = batch[:, :, 2*state_dim+error_dim:2*state_dim+2*error_dim]
 
+    set_point_seq = batch[:,:, 2*state_dim+2*error_dim:2*state_dim+3*error_dim]
+    initial_set_point_state = batch[:,0, 2*state_dim+2*error_dim:2*state_dim+3*error_dim]
+
+    initial_set_point_state = initial_set_point_state.unsqueeze(1)
+
     action_seq = batch[:, :, -action_dim-action_dim:-action_dim]
     new_action_seq = batch[:, :, -action_dim:]
 
 
-    return initial_state, initial_error_state, \
+    return initial_state, initial_error_state, initial_set_point_state,\
             state_seq, new_state_seq, \
-            error_state_seq, new_error_state_seq, \
+            error_state_seq, new_error_state_seq,\
+            set_point_seq, \
             action_seq, new_action_seq
 
 
@@ -197,3 +187,10 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         x = x + self.pe[:, :x.size(1)]
         return x
+    
+
+
+def angular_difference(cos_a1, sin_a1, cos_a2, sin_a2):
+    numerator = sin_a1 * cos_a2 - cos_a1 * sin_a2
+    denominator = cos_a1 * cos_a2 + sin_a1 * sin_a2
+    return torch.atan2(numerator, denominator)  # returns difference in radians, wrapped to [-pi, pi]
