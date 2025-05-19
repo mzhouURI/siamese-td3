@@ -4,10 +4,10 @@ import torch.nn as nn
 
 ## input states and actions, output states (RNN learns delta states)
 class VehicleModeler(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_dim, rnn_layers=1):
+    def __init__(self, state_dim, action_dim, hidden_dim, rnn_layers=1, dropout = 0.1):
         super().__init__()
         self.input_fc = nn.Linear(state_dim + action_dim, hidden_dim)
-        self.rnn = nn.LSTM(input_size=hidden_dim,hidden_size=hidden_dim, num_layers=rnn_layers, batch_first=True)
+        self.rnn = nn.LSTM(input_size=hidden_dim,hidden_size=hidden_dim, num_layers=rnn_layers, batch_first=True, dropout = dropout)
         self.output_layer = nn.Linear(hidden_dim, state_dim)
         self.layernorm = nn.LayerNorm(state_dim + action_dim)
 

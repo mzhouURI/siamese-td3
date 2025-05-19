@@ -13,13 +13,14 @@ class VehicleModeler(nn.Module):
         # self.pos_encoding = nn.Parameter(torch.randn(1, 10000, d_model))  # Max seq length = 1000
         self.pos_encoding = PositionalEncoding(d_model)
         # Input projection: state and action → d_model
-        self.layernorm = nn.LayerNorm(state_dim)
+        # self.layernorm = nn.LayerNorm(state_dim)
 
         self.state_encoder = nn.Linear(state_dim, d_model)
         self.action_encoder = nn.Linear(action_dim, d_model)
 
         # Transformer
-        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout, batch_first=True)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout, batch_first=True,
+                                                 activation ='gelu')
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
         # Output projection: d_model → state prediction
@@ -34,7 +35,11 @@ class VehicleModeler(nn.Module):
         """
         B, T, _ = action_seq.shape
         # Repeat current state for each timestep
-        current_state = self.layernorm(current_state)
+        # current_state = self.layernorm(current_state)
+        # Add before transformer_encoder
+        device = current_state.device
+        causal_mask = torch.triu(torch.ones(T, T, device=device), diagonal=1).bool()  # or float('-inf') version
+
         state_token = self.state_encoder(current_state).repeat(1, T, 1)  # [B, T, d_model]
         # Encode actions
         action_token = self.action_encoder(action_seq)  # [B, T, d_model]
@@ -44,7 +49,7 @@ class VehicleModeler(nn.Module):
         # x = x + self.pos_encoding[:, :T, :]  # Add positional encoding
         x = self.pos_encoding(x)
         # Pass through transformer
-        x = self.transformer_encoder(x)  # [B, T, d_model]
+        x = self.transformer_encoder(x, mask=causal_mask)  # [B, T, d_model]
 
         # Decode into future states
         pred_state_seq = self.state_decoder(x)  # [B, T, state_dim]

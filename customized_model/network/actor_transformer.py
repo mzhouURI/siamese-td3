@@ -14,13 +14,14 @@ class VehicleActor(nn.Module):
         # Positional encoding
         # self.pos_encoding = nn.Parameter(torch.randn(1, 10000, d_model))  # Max seq length = 1000
         self.pos_encoding = PositionalEncoding(d_model)
-        self.layernorm = nn.LayerNorm(state_dim)
+        # self.layernorm = nn.LayerNorm(state_dim)
 
         # Input projection: state and action → d_model
         self.state_encoder = nn.Linear(state_dim, d_model)
         
         # Transformer
-        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout, batch_first=True)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout, batch_first=True,
+                                                 activation ='gelu')
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
         # Output projection: d_model → state prediction
@@ -30,7 +31,7 @@ class VehicleActor(nn.Module):
 
         B = current_state.size(0)
         T = seq_len
-        current_state = self.layernorm(current_state)
+        # current_state = self.layernorm(current_state)
         # Repeat current state for each timestep
         state_token = self.state_encoder(current_state).repeat(1, T, 1)  # [B, T, d_model]
         # Encode actions
