@@ -10,7 +10,7 @@ from network.utilites import LoadData, GetData, safe_atan2
 
 ###load data into batches
 seq_len = 20       # sequence length for transformer
-batch_size = 8    # number of sequences per batch
+batch_size = 32    # number of sequences per batch
 num_epochs = 20    # how many passes over the dataset
 train_loader, val_loader, state_dim, error_dim, action_dim = LoadData("offline_data/filename1.csv", 0.2, batch_size, seq_len)
 
@@ -19,7 +19,7 @@ print("Using device:", device)
 
 
 model = VehicleActor(state_dim = state_dim+error_dim, action_dim = action_dim,
-                        d_model = 256, nhead = 8, num_layers=3, max_action= 0.7, dropout=0.0
+                        d_model = 256, nhead = 8, num_layers=4, max_action= 0.7, dropout=0.05
                         ).to(device)
 
 Vmodel = VehicleModeler(state_dim = state_dim, action_dim = action_dim,
@@ -87,7 +87,7 @@ for epoch in range(num_epochs):
         c_sin_yaw = initial_setpoint_state[:,:, ind_e_sin_yaw]
         c_cos_yaw = initial_setpoint_state[:,:, ind_e_cos_yaw]
         
-        for iter in range(100):
+        for iter in range(10):
             # print(iter)
 
             zero_depth_initial_state = initial_state.clone()
@@ -126,21 +126,22 @@ for epoch in range(num_epochs):
             pred_e = torch.stack([pred_e_depth, pred_e_cos_pitch, pred_e_sin_pitch, pred_e_cos_yaw,  pred_e_sin_yaw, pred_e_u ], dim = -1)
             pred_e= torch.cat([initial_error_state, pred_e], dim = 1)
 
-            w = torch.tensor([[1, 10, 10, 5, 5, 5]], dtype=torch.float32)  # shape: [1, 5]
+            w = torch.tensor([[2, 5, 5, 5, 5, 5]], dtype=torch.float32)  # shape: [1, 5]
             w = w.unsqueeze(0).to(device)
 
             pred_e_w = pred_e * w
             #weighted starting from the first one which is zero (current state)
             weights = torch.linspace(0.0, 1.0, seq_len+1).to(device)
             weights = weights.view(1, seq_len+1, 1)
-            error_term = pred_e_w**2
+            error_term = pred_e_w* weights
             # print(weights.shape)
             # print(error_term.shape)
 
-            weighted_loss = torch.mean(error_term*weights)
+            weighted_loss = torch.mean(error_term **2)
 
             jerk = pred_e[:,2:,:] - 2* pred_e[:,1:-1,:] + pred_e[:,:-2,:]
-            jerk_loss = torch.mean(jerk **2)   
+            weighted_jerk = jerk * w
+            jerk_loss = torch.mean(weighted_jerk **2)   
 
             delt_state = pred_e[:,1:,:] - pred_e[:,:-1,:]
             delta_state_loss = torch.mean(delt_state **2) 
@@ -148,7 +149,7 @@ for epoch in range(num_epochs):
             #total energy
             energy_loss = torch.mean(pred_actions  **2)
 
-            total_loss = 0.1*jerk_loss + weighted_loss + 0.1*delta_state_loss + 0.1*energy_loss
+            total_loss = 0.1*jerk_loss + weighted_loss + 0.0*delta_state_loss + 0.1*energy_loss
             # print(total_loss.item())
             optimizer.zero_grad()
             total_loss.backward()
@@ -182,57 +183,51 @@ for epoch in range(num_epochs):
             
             ########visualization
            
-            fig.suptitle(f"iteration: {iter}, batch no: {batch_count}, epoch: {epoch}", fontsize=16)
-            # ax4.set_ylim(-3, 3)
-            # ax3.set_ylim(-0.2, 0.2)
-            # ax2.set_ylim(-3.2, 3.2)
-            # ax1.set_ylim(-1, 1)
-            ax4.set_title("depth error")
-            ax3.set_title("pitch error")
-            ax2.set_title("yaw error")
-            ax1.set_title("surge error")
+            # fig.suptitle(f"iteration: {iter}, batch no: {batch_count}, epoch: {epoch}", fontsize=16)
+            # # ax4.set_ylim(-3, 3)
+            # # ax3.set_ylim(-0.2, 0.2)
+            # # ax2.set_ylim(-3.2, 3.2)
+            # # ax1.set_ylim(-1, 1)
+            # ax4.set_title("depth error")
+            # ax3.set_title("pitch error")
+            # ax2.set_title("yaw error")
+            # ax1.set_title("surge error")
 
-            ax21.set_ylim(-1, 1)
-            ax22.set_ylim(-1, 1)
-            ax23.set_ylim(-1, 1)
-            ax24.set_ylim(-1, 1)
-            ax21.set_title("surge")
-            ax22.set_title("sway")
-            ax23.set_title("heave stern")
-            ax24.set_title("heave bow")
-            #add  current error
+            # ax21.set_ylim(-1, 1)
+            # ax22.set_ylim(-1, 1)
+            # ax23.set_ylim(-1, 1)
+            # ax24.set_ylim(-1, 1)
+            # ax21.set_title("surge")
+            # ax22.set_title("sway")
+            # ax23.set_title("heave stern")
+            # ax24.set_title("heave bow")
+            # #add  current error
 
-            dd =considered_error_state.detach().cpu().numpy() 
-            axes = [ax4, ax3, ax2, ax1]
-            for i, ax in enumerate(axes):
-                ax.plot(dd[1,:,i], label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
-                ax.plot(dd[1,0,i], label='Label (optional)', color='blue', linestyle='-', marker='o')  # Customize as needed
-                ax.axhline(y=0, color='black', linewidth=2.0, zorder=5)  # You can adjust color and width
+            # dd =considered_error_state.detach().cpu().numpy() 
+            # axes = [ax4, ax3, ax2, ax1]
+            # for i, ax in enumerate(axes):
+            #     ax.plot(dd[1,:,i], label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
+            #     ax.plot(dd[1,0,i], label='Label (optional)', color='blue', linestyle='-', marker='o')  # Customize as needed
+            #     ax.axhline(y=0, color='black', linewidth=2.0, zorder=5)  # You can adjust color and width
 
-            axes = [ax21, ax22, ax23, ax24]
-            for i, ax in enumerate(axes):
-                ax.plot(pred_actions[1,:,i].detach().cpu().numpy() , label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
-                ax.axhline(y=0, color='black', linewidth=2.0, zorder=5)  # You can adjust color and width
+            # axes = [ax21, ax22, ax23, ax24]
+            # for i, ax in enumerate(axes):
+            #     ax.plot(pred_actions[1,:,i].detach().cpu().numpy() , label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
+            #     ax.axhline(y=0, color='black', linewidth=2.0, zorder=5)  # You can adjust color and width
             
-            plt.pause(0.1)
+            # plt.pause(0.1)
 
-            ax1.clear()
-            ax2.clear()
-            ax3.clear()
-            ax4.clear()
-            ax21.clear()
-            ax22.clear()
-            ax23.clear()
-            ax24.clear()
-            # pre_e_flat = pred_e.reshape(-1, 4)
-            # if (epoch % 2 == 0) and (batch_count >1) and (batch_count <3):
-            #     for i in range(4):
-            #         dd = pre_e_flat[:,i].detach().cpu().numpy() 
-            #         # plt.plot(plot_desired_data[:,i].detach().cpu().numpy(), label='Label (optional)', color='blue', linestyle='-', marker='o')  # Customize as needed
-            #         # plt.plot(plot_predict_data[:,i].detach().cpu().numpy(), label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
-            #         plt.plot(abs(dd), label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
-
-            #         plt.show()
+            # ax1.clear()
+            # ax2.clear()
+            # ax3.clear()
+            # ax4.clear()
+            # ax21.clear()
+            # ax22.clear()
+            # ax23.clear()
+            # ax24.clear()
+            
+        print(f"batch no: {batch_count}/{len(train_loader)}, epoch: {epoch}")
+            
         batch_count += 1
         
         total_train_loss += total_loss.item()
