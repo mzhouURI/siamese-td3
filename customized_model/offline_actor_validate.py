@@ -9,7 +9,7 @@ from torch.utils.data import Dataset, DataLoader, Subset, random_split
 from network.utilites import LoadData, GetData, safe_atan2, angular_difference
 
 ###load data into batches
-seq_len = 100       # sequence length for transformer
+seq_len = 20       # sequence length for transformer
 batch_size = 2    # number of sequences per batch
 num_epochs = 20    # how many passes over the dataset
 train_loader, val_loader, state_dim, error_dim, action_dim = LoadData("offline_data/filename1.csv", 0.2, batch_size, seq_len)
@@ -23,12 +23,12 @@ max_action = torch.tensor([0.6, 0.6, 0.5, 0.5]).to(device)
 #                         hidden_dim = 64, rnn_layers = 2,
 #                         ).to(device)
 actor = VehicleActor(state_dim = state_dim+error_dim, action_dim = action_dim,
-                        d_model = 128, nhead = 8, num_layers=2, max_action= max_action, dropout=0.0
+                        d_model = 256, nhead = 8, num_layers=4, max_action= 0.7, dropout=0.05
                         ).to(device)
 actor.load_state_dict(torch.load('offline_model/actor.pth', map_location=device))
 
-Vmodel = VehicleModeler(state_dim = state_dim, action_dim = action_dim, dropout=0.0,
-                 d_model = 128, nhead = 8, num_layers = 2,
+Vmodel = VehicleModeler(state_dim = state_dim, action_dim = action_dim,
+                 d_model = 128, nhead = 8, num_layers = 3, dropout=0.0
                  ).to(device)
 Vmodel.load_state_dict(torch.load('offline_model/modeler.pth', map_location=device))
 

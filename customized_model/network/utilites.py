@@ -35,7 +35,8 @@ def LoadData(filename, val_ratio, batch_size, seq_len):
     #28:30 c_roll, c_pitch, c_yaw
     #31:33 c_u, c_v, c_w
     #34:36 c_p, c_q, c_r
-    #37:40 actions
+    #37:39 ax ay az from imu
+    #40:43 actions
 
     ##get action and new actions
     current_action = data[:-1, -4:]
@@ -46,7 +47,7 @@ def LoadData(filename, val_ratio, batch_size, seq_len):
     cs_pitch = get_cos_sin(data,17)
     cs_yaw = get_cos_sin(data, 18)
     # Remove pitch and yaw columns from `states`
-    base_states = data[:-1, [15, 19, 20, 21, 22, 23, 24]]
+    base_states = data[:-1, [15, 19, 20, 21, 22, 23, 24, 37, 38, 39]]
     # Trim cos/sin arrays to match states shape (one less row due to data[:-1])
     # Stack new states: [x, cos_pitch, sin_pitch, cos_yaw, sin_yaw, z, vx, vy]
     states = np.column_stack((base_states[:, 0],   # col 15 (x)
@@ -56,7 +57,7 @@ def LoadData(filename, val_ratio, batch_size, seq_len):
                             base_states[:, 1:],  # cols 19, 23, 24 (z, vx, vy)
                             ))
     
-    base_state_seq = data[1:,[15, 19, 20, 21, 22, 23, 24]]
+    base_state_seq = data[1:,[15, 19, 20, 21, 22, 23, 24, 37,38,39]]
     state_seq = np.column_stack((base_state_seq[:, 0],   # col 15 (x)
                             cs_roll[1:,:],
                             cs_pitch[1:,:],

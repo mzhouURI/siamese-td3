@@ -13,10 +13,14 @@ class VehicleModeler(nn.Module):
         # self.pos_encoding = nn.Parameter(torch.randn(1, 10000, d_model))  # Max seq length = 1000
         self.pos_encoding = PositionalEncoding(d_model)
         # Input projection: state and action → d_model
-        # self.layernorm = nn.LayerNorm(state_dim)
 
         self.state_encoder = nn.Linear(state_dim, d_model)
         self.action_encoder = nn.Linear(action_dim, d_model)
+
+        self.in_mlp = nn.Linear(d_model, d_model)
+       
+        self.layernorm = nn.LayerNorm(d_model)
+
 
         # Transformer
         encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout, batch_first=True,
@@ -24,7 +28,14 @@ class VehicleModeler(nn.Module):
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
         # Output projection: d_model → state prediction
-        self.state_decoder = nn.Linear(d_model, state_dim)
+        # self.out_mlp = nn.Linear(d_model, d_model)
+
+        # self.state_decoder = nn.Linear(d_model, state_dim)
+        self.state_decoder = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.ReLU(),
+            nn.Linear(d_model, state_dim)
+        )
 
     def forward(self, current_state, action_seq):
         """
@@ -46,6 +57,8 @@ class VehicleModeler(nn.Module):
 
         # Combine state and action embeddings
         x = state_token + action_token  # [B, T, d_model]
+        x = self.in_mlp(x)
+        x= self.layernorm(x)
         # x = x + self.pos_encoding[:, :T, :]  # Add positional encoding
         x = self.pos_encoding(x)
         # Pass through transformer

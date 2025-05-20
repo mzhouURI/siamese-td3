@@ -8,9 +8,11 @@ import random
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 from std_msgs.msg import Float64, Float64MultiArray
+from sensor_msgs.msg import Imu
 import torch
 import collections
 from network.agent import RL_MPC_Agent
+from network.actor_transformer import VehicleActor
 from network.utilites import flatten_state
 
 class MPCROS(Node):
@@ -22,6 +24,7 @@ class MPCROS(Node):
         self.subscription = self.create_subscription(ControlProcess, '/mvp2_test_robot/controller/process/value', self.state_callback, 1)
         self.subscription2 = self.create_subscription(ControlProcess, '/mvp2_test_robot/controller/process/error', self.state_error_callback, 1)
 
+        self.imu_sub = self.create_subscription(Imu, '/mvp2_test_robot/imu/data', self.imu_callback, 1)
         self.set_point_pub = self.create_publisher(ControlProcess, '/mvp2_test_robot/controller/process/set_point', 3)
         self.thruster_pub = self.create_publisher(Float64MultiArray, '/mvp2_test_robot/stonefish/thruster_command', 5)
 
@@ -59,27 +62,36 @@ class MPCROS(Node):
             'euler': (0,0,0,0), # Quaternion (x, y, z, w)
             'u': (0)
         }
+
+        imu_state = {
+            'ax': {0},
+            'ay': {0},
+            'az': {0}
+
+        }
         self.state = flatten_state(state)
         self.error_state = flatten_state(error_state)
-
+        self.imu_state = flatten_state(imu_state)
+        print(self.imu_state)
         self.prev_action = torch.zeros(1,4)
         self.prev_error_state = torch.zeros(1,len(self.error_state))
         self.prev_state = torch.zeros(1,len(self.state))
-        self.window_size = 100
+        self.window_size = 25
 
         self.performance = 0
 
         self.state_buffer = collections.deque(maxlen=self.window_size)
         self.error_state_buffer = collections.deque(maxlen=self.window_size)
-
+        print( len(self.state))
+        print(len(self.error_state))
+        print(len(self.imu_state))
+        # exit()
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = RL_MPC_Agent(state_dim = len(self.state), error_dim = len(self.error_state), action_dim = 4,
-                                hidden_dim = 256, num_layers = 2, num_head= 8, device = self.device,
-                                actor_ckpt = 'model/actor.pth',
-                                modeler_ckpt = 'offline_model/modeler.pth',
-                                actor_lr = 1e-6, modeler_lr= 1e-6, policy_delay=5,
-                                noise_std=0.0)
+        self.model = VehicleActor(state_dim = len(self.state)+len(self.error_state)+len(self.imu_state), action_dim = 4,
+                        d_model = 256, nhead = 8, num_layers=3, max_action= 0.7, dropout=0.05
+                        ).to(self.device)
+        self.model.load_state_dict(torch.load('offline_model/actor.pth', map_location=self.device))
 
         torch.autograd.set_detect_anomaly(True)
         self.timer_setpoint_update = self.create_timer(100, self.set_point_update)
@@ -88,7 +100,7 @@ class MPCROS(Node):
 
         self.set_controller = self.create_client(SetBool, '/mvp2_test_robot/controller/set')  
         self.active_controller(True)
-        self.model.actor.eval()
+        self.model.eval()
         # self.model.modeler.eval()
     
 
@@ -101,9 +113,6 @@ class MPCROS(Node):
     
 
     def set_point_update(self):
-        self.model.save_model()
-        print(f"episode reward = {self.performance}")
-        self.model.save_model()
         msg = Float64()
         msg.data = float (self.performance)
         self.total_reward_pub.publish(msg)
@@ -117,6 +126,14 @@ class MPCROS(Node):
     
     def set_point_publish(self):
         self.set_point_pub.publish(self.set_point)
+
+    def imu_callback(self, msg):
+        imu_state = {
+            'ax': {msg.linear_acceleration.x},
+            'ay': {msg.linear_acceleration.y},
+            'az': {msg.linear_acceleration.z}
+        }
+        self.imu_state = flatten_state(imu_state)
 
     def state_callback(self, msg):
 
@@ -151,32 +168,38 @@ class MPCROS(Node):
 
     def step(self):
         new_state = torch.tensor(self.state, dtype=torch.float32).unsqueeze(0)
+        imu_state = torch.tensor(self.imu_state, dtype=torch.float32).unsqueeze(0)
+        # print(imu_state.shape)
+        new_state = torch.cat([new_state, imu_state], dim = 1)
+
         new_error_state = torch.tensor(self.error_state, dtype=torch.float32).unsqueeze(0)
         #action
         zero_depth_initial_state = new_state.clone()
         zero_depth_initial_state[:,0] = 0
+        # print(zero_depth_initial_state.device)
+        # print(new_error_state.device)
         actor_states= torch.cat([zero_depth_initial_state, new_error_state], dim = 1)
+        actor_states = actor_states.to(self.device)
     
-        action = self.model.select_action(actor_states, self.window_size)
-        # print(action.shape)
-        #pitch the first action from the sequence and command to the vehicle
+        action = self.model.forward(actor_states, self.window_size)
+        # #pitch the first action from the sequence and command to the vehicle
         msg = Float64MultiArray()
-        msg.data = action.detach().cpu().numpy().flatten().tolist()                   
+        msg.data = action[:,0,:].detach().cpu().numpy().flatten().tolist()                   
         self.thruster_pub.publish(msg)
         
-        # self.model.replay_buffer.add(self.prev_state, new_state, self.prev_error_state, new_error_state, self.prev_action.detach().cpu().numpy())
+        # # self.model.replay_buffer.add(self.prev_state, new_state, self.prev_error_state, new_error_state, self.prev_action.detach().cpu().numpy())
   
-        self.prev_state = new_state
-        self.prev_error_state = new_error_state
-        self.prev_action = action
+        # self.prev_state = new_state
+        # self.prev_error_state = new_error_state
+        # self.prev_action = action
         
-        # if len(self.model.replay_buffer.buffer) > self.batch_warmup_size + self.window_size:
-        #     c1_loss, actor_loss = self.model.train(batch_size=self.batch_size, sequence_len = self.window_size)
-        #     msg = Float64MultiArray()
-        #     msg.data = [float(c1_loss), float(actor_loss)]
-        #     self.loss_pub.publish(msg)
+        # # if len(self.model.replay_buffer.buffer) > self.batch_warmup_size + self.window_size:
+        # #     c1_loss, actor_loss = self.model.train(batch_size=self.batch_size, sequence_len = self.window_size)
+        # #     msg = Float64MultiArray()
+        # #     msg.data = [float(c1_loss), float(actor_loss)]
+        # #     self.loss_pub.publish(msg)
 
-        self.performance = self.performance + torch.abs(new_error_state).sum()
+        # self.performance = self.performance + torch.abs(new_error_state).sum()
 
    
 def main(args=None):

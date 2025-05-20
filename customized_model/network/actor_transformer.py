@@ -18,15 +18,21 @@ class VehicleActor(nn.Module):
 
         # Input projection: state and action → d_model
         self.state_encoder = nn.Linear(state_dim, d_model)
-        
+        self.in_mlp = nn.Linear(d_model, d_model)
+        self.layernorm = nn.LayerNorm(d_model)
+
         # Transformer
         encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout, batch_first=True,
                                                  activation ='gelu')
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
         # Output projection: d_model → state prediction
-        self.state_decoder = nn.Linear(d_model, action_dim)
-
+        # self.state_decoder = nn.Linear(d_model, action_dim)
+        self.state_decoder = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.ReLU(),
+            nn.Linear(d_model, state_dim)
+        )
     def forward(self, current_state, seq_len):
 
         B = current_state.size(0)
@@ -37,7 +43,9 @@ class VehicleActor(nn.Module):
         # Encode actions
         # Combine state and action embeddings
         x = state_token  # [B, T, d_model]
-        # x = x + self.pos_encoding[:, :T, :]  # Add positional encoding
+        x = self.in_mlp(x)
+        x = self.layernorm(x)
+
         x = self.pos_encoding(x)
         # Pass through transformer
         x = self.transformer_encoder(x)  # [B, T, d_model]
