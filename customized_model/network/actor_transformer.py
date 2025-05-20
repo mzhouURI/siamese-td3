@@ -31,7 +31,7 @@ class VehicleActor(nn.Module):
         self.state_decoder = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.ReLU(),
-            nn.Linear(d_model, state_dim)
+            nn.Linear(d_model, action_dim)
         )
     def forward(self, current_state, seq_len):
 

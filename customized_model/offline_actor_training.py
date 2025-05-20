@@ -9,7 +9,7 @@ from torch.utils.data import Dataset, DataLoader, Subset, random_split
 from network.utilites import LoadData, GetData, safe_atan2
 
 ###load data into batches
-seq_len = 25       # sequence length for transformer
+seq_len = 30       # sequence length for transformer
 batch_size = 8    # number of sequences per batch
 num_epochs = 100    # how many passes over the dataset
 train_loader, val_loader, state_dim, error_dim, action_dim = LoadData("offline_data/filename2.csv", 0.2, batch_size, seq_len)
@@ -70,7 +70,7 @@ for epoch in range(num_epochs):
     for batch in train_loader:
         batch = batch.to(device)  # shape: (batch_size, seq_len, input_dim + action_dim)
         initial_state, initial_error_state, initial_setpoint_state, \
-        state_seq, _, error_state_seq, new_error_state_seq, set_point_seq, action_seq, _=GetData(batch, state_dim, error_dim, action_dim)
+        state_seq, _, error_state_seq, new_error_state_seq, set_point_seq, action_seq, _= GetData(batch, state_dim, error_dim, action_dim)
         
         ############################################################
         ############## model based ######################
@@ -94,7 +94,6 @@ for epoch in range(num_epochs):
 
         actor_states= torch.cat([zero_depth_initial_state, initial_error_state], dim = 2)
         pred_actions= model.forward(actor_states, seq_len)  # Your model takes (state, error) as inputs
-        # print(pred_actions.shape)
         
         # with torch.no_grad():
         pred_states = Vmodel(zero_depth_initial_state, pred_actions)
@@ -143,13 +142,17 @@ for epoch in range(num_epochs):
 
         ##include my current action for smoothness
         pred_actions = torch.cat([action_seq[:,0,:].unsqueeze(1), pred_actions], dim = 1)
+        #decreasing weights for delta
+        weights = torch.linspace(1.0, 0.0, seq_len).to(device)
+        weights = weights.view(1, seq_len, 1)
         delta_action = pred_actions[:,1:,:] - pred_actions[:,:-1,:]
+        delta_action =delta_action*weights
         delta_action_loss = torch.sum(delta_action **2) 
 
         #total energy
         energy_loss = torch.sum(pred_actions  **2)
 
-        total_loss = 0.1*jerk_loss + weighted_loss + 0.2*delta_action_loss + 2*energy_loss
+        total_loss = 0.1*jerk_loss + weighted_loss + 0.5*delta_action_loss + 2*energy_loss
         # print(f"jerk_loss: {0.1*jerk_loss}, w_loss: {weighted_loss}, e_loss: {1*energy_loss}, d_loss: {1.0*delta_action_loss}")
         # print(total_loss.item())
         optimizer.zero_grad()
