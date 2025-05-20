@@ -88,7 +88,7 @@ class MPCROS(Node):
         # exit()
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = VehicleActor(state_dim = len(self.state)+len(self.error_state)+len(self.imu_state), action_dim = 4,
+        self.model = VehicleActor(state_dim = len(self.state)+len(self.imu_state), error_dim=len(self.error_state), action_dim = 4,
                         d_model = 256, nhead = 8, num_layers=3, max_action= 0.7, dropout=0.05
                         ).to(self.device)
         self.model.load_state_dict(torch.load('offline_model/actor.pth', map_location=self.device))
@@ -176,12 +176,13 @@ class MPCROS(Node):
         #action
         zero_depth_initial_state = new_state.clone()
         zero_depth_initial_state[:,0] = 0
-        # print(zero_depth_initial_state.device)
-        # print(new_error_state.device)
-        actor_states= torch.cat([zero_depth_initial_state, new_error_state], dim = 1)
-        actor_states = actor_states.to(self.device)
+
+        prev_action = self.prev_action.detach().cpu()
+        # print(prev_action.shape)
+        # actor_states= torch.cat([zero_depth_initial_state, new_error_state, prev_action], dim = 1)
+        # actor_states = actor_states.to(self.device)
     
-        action = self.model.forward(actor_states, self.window_size)
+        action = self.model.forward(zero_depth_initial_state, new_error_state, prev_action, self.window_size)
         # #pitch the first action from the sequence and command to the vehicle
         msg = Float64MultiArray()
         msg.data = action[:,0,:].detach().cpu().numpy().flatten().tolist()                   
@@ -191,7 +192,7 @@ class MPCROS(Node):
   
         # self.prev_state = new_state
         # self.prev_error_state = new_error_state
-        # self.prev_action = action
+        self.prev_action = action[:,0,:]
         
         # # if len(self.model.replay_buffer.buffer) > self.batch_warmup_size + self.window_size:
         # #     c1_loss, actor_loss = self.model.train(batch_size=self.batch_size, sequence_len = self.window_size)

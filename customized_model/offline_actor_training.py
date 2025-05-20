@@ -18,7 +18,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
 
-model = VehicleActor(state_dim = state_dim+error_dim, action_dim = action_dim,
+model = VehicleActor(state_dim = state_dim, error_dim = error_dim, action_dim = action_dim,
                         d_model = 256, nhead = 8, num_layers=3, max_action= 0.7, dropout=0.05
                         ).to(device)
 
@@ -91,9 +91,9 @@ for epoch in range(num_epochs):
         zero_depth_initial_state = initial_state.clone()
         zero_depth_initial_state[:,:,0] = 0
 
-
-        actor_states= torch.cat([zero_depth_initial_state, initial_error_state], dim = 2)
-        pred_actions= model.forward(actor_states, seq_len)  # Your model takes (state, error) as inputs
+        current_action = action_seq[:,0,:].unsqueeze(1)
+        # actor_states= torch.cat([zero_depth_initial_state, initial_error_state, current_action], dim = 2)
+        pred_actions= model.forward(zero_depth_initial_state, initial_error_state, current_action, seq_len)  # Your model takes (state, error) as inputs
         
         # with torch.no_grad():
         pred_states = Vmodel(zero_depth_initial_state, pred_actions)
@@ -122,38 +122,45 @@ for epoch in range(num_epochs):
         
         pred_e = torch.stack([pred_e_depth, pred_e_cos_pitch, pred_e_sin_pitch, pred_e_cos_yaw,  pred_e_sin_yaw, pred_e_u ], dim = -1)
         pred_e= torch.cat([initial_error_state, pred_e], dim = 1)
+        ##include my current action for smoothness
+        pred_actions = torch.cat([current_action, pred_actions], dim = 1)
 
-        w = torch.tensor([[2, 5, 5, 5, 5, 5]], dtype=torch.float32)  # shape: [1, 5]
+        ##weighting for states
+        w = torch.tensor([[1, 10, 10, 1, 1, 5]], dtype=torch.float32)  
         w = w.unsqueeze(0).to(device)
 
         pred_e_w = pred_e * w
         #weighted starting from the first one which is zero (current state)
-        weights = torch.linspace(0.0, 1.0, seq_len+1).to(device)
-        weights = weights.view(1, seq_len+1, 1)
-        error_term = pred_e_w* weights
-        # print(weights.shape)
-        # print(error_term.shape)
+        # weights = torch.linspace(0.0, 1.0, seq_len+1).to(device)
+        # weights = weights.view(1, seq_len+1, 1)
+
+        # sigmoid weights range from 1 to 2
+        weights = torch.torch.arange(0, seq_len)
+        weights = 2 / (1 + torch.exp(-0.25 * weights))
+        weights = weights.view(1, seq_len, 1).to(device)
+        error_term = pred_e_w[:,1:,:]* weights  #exclude the first one becasue is my current
 
         weighted_loss = torch.sum(error_term **2)
 
+        ##jerky future state
         jerk = pred_e[:,2:,:] - 2* pred_e[:,1:-1,:] + pred_e[:,:-2,:]
         weighted_jerk = jerk * w
-        jerk_loss = torch.sum(weighted_jerk **2)   
+        state_jerk_loss = torch.sum(jerk **2)   
 
-        ##include my current action for smoothness
-        pred_actions = torch.cat([action_seq[:,0,:].unsqueeze(1), pred_actions], dim = 1)
-        #decreasing weights for delta
-        weights = torch.linspace(1.0, 0.0, seq_len).to(device)
-        weights = weights.view(1, seq_len, 1)
+        ##action related loss
         delta_action = pred_actions[:,1:,:] - pred_actions[:,:-1,:]
-        delta_action =delta_action*weights
+        delta_action = delta_action
         delta_action_loss = torch.sum(delta_action **2) 
+
+
+        jerk = pred_actions[:,2:,:] - 2* pred_actions[:,1:-1,:] + pred_actions[:,:-2,:]
+        action_jerk_loss = torch.sum(jerk **2)   
 
         #total energy
         energy_loss = torch.sum(pred_actions  **2)
 
-        total_loss = 0.1*jerk_loss + weighted_loss + 0.5*delta_action_loss + 2*energy_loss
-        # print(f"jerk_loss: {0.1*jerk_loss}, w_loss: {weighted_loss}, e_loss: {1*energy_loss}, d_loss: {1.0*delta_action_loss}")
+        total_loss = 2*action_jerk_loss + 5*weighted_loss + 2*energy_loss + 1*delta_action_loss + 1*state_jerk_loss
+        # print(f"jerk_loss: {2*jerk_loss}, w_loss: {weighted_loss}, e_loss: {2*energy_loss}, d_loss: {1*delta_action_loss}")
         # print(total_loss.item())
         optimizer.zero_grad()
         total_loss.backward()
@@ -185,50 +192,50 @@ for epoch in range(num_epochs):
         considered_error_state= torch.cat([e_0, pred_display], dim = 1)
         
         ########visualization
-        # if (epoch % 5 == 0) and (epoch>3) :
+        if (epoch % 10 == 0) and (epoch>50) :
         
-        #     fig.suptitle(f"iteration: {iter}, batch no: {batch_count}, epoch: {epoch}", fontsize=16)
-        #     ax4.set_ylim(-3, 3)
-        #     ax3.set_ylim(-0.2, 0.2)
-        #     ax2.set_ylim(-3.2, 3.2)
-        #     ax1.set_ylim(-1, 1)
-        #     ax4.set_title("depth error")
-        #     ax3.set_title("pitch error")
-        #     ax2.set_title("yaw error")
-        #     ax1.set_title("surge error")
+            fig.suptitle(f"iteration: {iter}, batch no: {batch_count}, epoch: {epoch}", fontsize=16)
+            ax4.set_ylim(-3, 3)
+            ax3.set_ylim(-0.2, 0.2)
+            ax2.set_ylim(-3.2, 3.2)
+            ax1.set_ylim(-1, 1)
+            ax4.set_title("depth error")
+            ax3.set_title("pitch error")
+            ax2.set_title("yaw error")
+            ax1.set_title("surge error")
 
-        #     ax21.set_ylim(-1, 1)
-        #     ax22.set_ylim(-1, 1)
-        #     ax23.set_ylim(-1, 1)
-        #     ax24.set_ylim(-1, 1)
-        #     ax21.set_title("surge")
-        #     ax22.set_title("sway")
-        #     ax23.set_title("heave stern")
-        #     ax24.set_title("heave bow")
-        #     #add  current error
+            ax21.set_ylim(-1, 1)
+            ax22.set_ylim(-1, 1)
+            ax23.set_ylim(-1, 1)
+            ax24.set_ylim(-1, 1)
+            ax21.set_title("surge")
+            ax22.set_title("sway")
+            ax23.set_title("heave stern")
+            ax24.set_title("heave bow")
+            #add  current error
 
-        #     dd =considered_error_state.detach().cpu().numpy() 
-        #     axes = [ax4, ax3, ax2, ax1]
-        #     for i, ax in enumerate(axes):
-        #         ax.plot(dd[1,:,i], label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
-        #         ax.plot(dd[1,0,i], label='Label (optional)', color='blue', linestyle='-', marker='o')  # Customize as needed
-        #         ax.axhline(y=0, color='black', linewidth=2.0, zorder=5)  # You can adjust color and width
+            dd =considered_error_state.detach().cpu().numpy() 
+            axes = [ax4, ax3, ax2, ax1]
+            for i, ax in enumerate(axes):
+                ax.plot(dd[1,:,i], label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
+                ax.plot(dd[1,0,i], label='Label (optional)', color='blue', linestyle='-', marker='o')  # Customize as needed
+                ax.axhline(y=0, color='black', linewidth=2.0, zorder=5)  # You can adjust color and width
 
-        #     axes = [ax21, ax22, ax23, ax24]
-        #     for i, ax in enumerate(axes):
-        #         ax.plot(pred_actions[1,:,i].detach().cpu().numpy() , label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
-        #         ax.axhline(y=0, color='black', linewidth=2.0, zorder=5)  # You can adjust color and width
+            axes = [ax21, ax22, ax23, ax24]
+            for i, ax in enumerate(axes):
+                ax.plot(pred_actions[1,:,i].detach().cpu().numpy() , label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
+                ax.axhline(y=0, color='black', linewidth=2.0, zorder=5)  # You can adjust color and width
             
-        #     plt.pause(0.1)
+            plt.pause(0.1)
 
-        #     ax1.clear()
-        #     ax2.clear()
-        #     ax3.clear()
-        #     ax4.clear()
-        #     ax21.clear()
-        #     ax22.clear()
-        #     ax23.clear()
-        #     ax24.clear()
+            ax1.clear()
+            ax2.clear()
+            ax3.clear()
+            ax4.clear()
+            ax21.clear()
+            ax22.clear()
+            ax23.clear()
+            ax24.clear()
             
         # print(f"batch no: {batch_count}/{len(train_loader)}, epoch: {epoch}")
             

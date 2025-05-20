@@ -10,9 +10,9 @@ from network.utilites import LoadData, GetData
 
 
 ###load data into batches
-seq_len = 100       # sequence length for transformer
+seq_len = 50       # sequence length for transformer
 batch_size =2    # number of sequences per batch
-train_loader, val_loader, state_dim, error_dim, action_dim = LoadData("offline_data/filename1.csv", 0.1, batch_size, seq_len)
+train_loader, val_loader, state_dim, error_dim, action_dim = LoadData("offline_data/filename2.csv", 0.1, batch_size, seq_len)
 
 
 ##make modlayernorm
@@ -22,12 +22,11 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #                  ).to(device)
 
 model = VehicleModeler(state_dim = state_dim, action_dim = action_dim,
-                 d_model = 128, nhead = 8, num_layers = 3, dropout=0.0
+                 d_model = 256, nhead = 8, num_layers = 3, dropout=0.0
                  ).to(device)
 model.load_state_dict(torch.load('offline_model/modeler.pth', map_location=device))
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, amsgrad = True)
-loss_fn = nn.MSELoss(reduction = 'sum')
 
 
 ep_train_loss = []

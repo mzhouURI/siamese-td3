@@ -12,7 +12,7 @@ from network.utilites import LoadData, GetData, safe_atan2, angular_difference
 seq_len = 50       # sequence length for transformer
 batch_size = 128    # number of sequences per batch
 num_epochs = 20    # how many passes over the dataset
-train_loader, val_loader, state_dim, error_dim, action_dim = LoadData("offline_data/filename1.csv", 0.2, batch_size, seq_len)
+train_loader, val_loader, state_dim, error_dim, action_dim = LoadData("offline_data/filename2.csv", 0.2, batch_size, seq_len)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
@@ -23,7 +23,7 @@ max_action = torch.tensor([0.6, 0.6, 0.5, 0.5]).to(device)
 #                         hidden_dim = 64, rnn_layers = 2,
 #                         ).to(device)
 model = VehicleActor(state_dim = state_dim+error_dim, action_dim = action_dim,
-                        d_model = 128, nhead = 8, num_layers=2, max_action= max_action, dropout=0.0
+                        d_model = 256, nhead = 8, num_layers=3, max_action= max_action, dropout=0.0
                         ).to(device)
 # model = VehicleActor(state_dim = state_dim+error_dim, action_dim = action_dim,
 #                         hidden_dim = 256, seq_len = seq_len, num_layers =3, max_action = 0.7
@@ -35,7 +35,7 @@ model = VehicleActor(state_dim = state_dim+error_dim, action_dim = action_dim,
 #                  ).to(device)
 
 Vmodel = VehicleModeler(state_dim = state_dim, action_dim = action_dim, dropout=0.0,
-                 d_model = 128, nhead = 8, num_layers = 2,
+                 d_model = 256, nhead = 8, num_layers = 3,
                  ).to(device)
 Vmodel.load_state_dict(torch.load('offline_model/modeler.pth', map_location=device))
 
@@ -233,13 +233,13 @@ for epoch in range(num_epochs):
             # print(f"Step {i}: Loss = {total_loss.item():.4f}")
         ####################################################################################
         #plot predicted states final errors
-        # pre_e_flat = future_errors.reshape(-1, 4)
-        # for i in range(4):
-        #     dd = error_diff[1,:,i].detach().cpu().numpy() 
-        #     # plt.plot(plot_predict_data[:,i].detach().cpu().numpy(), label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
-        #     plt.plot(abs(dd), label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
-        #     # plt.plot(a_seq[1,:,i].detach().cpu().numpy(),label='Label (optional)', color='red', linestyle='-', marker='o')
-        #     plt.show()
+            # pre_e_flat = future_errors.reshape(-1, 4)
+            # for i in range(4):
+            #     dd = error_diff[1,:,i].detach().cpu().numpy() 
+            #     # plt.plot(plot_predict_data[:,i].detach().cpu().numpy(), label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
+            #     plt.plot(abs(dd), label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
+            #     # plt.plot(a_seq[1,:,i].detach().cpu().numpy(),label='Label (optional)', color='red', linestyle='-', marker='o')
+            #     plt.show()
 
         ##actor
         pred_actions= model.forward(actor_states, seq_len)  # Your model takes (state, error) as inputs

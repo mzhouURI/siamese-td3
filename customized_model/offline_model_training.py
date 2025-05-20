@@ -59,7 +59,7 @@ for epoch in range(num_epochs):
     for batch in train_loader:
         batch = batch.to(device)  # shape: (batch_size, seq_len, input_dim + action_dim)
 
-        initial_state, _, _, _, new_state_seq, _, _, _, action_seq, _=GetData(batch, state_dim, error_dim, action_dim)
+        initial_state, _, _, _, new_state_seq, _, _, _, _, action_seq=GetData(batch, state_dim, error_dim, action_dim)
 
         zero_depth_initial_state = initial_state.clone()
         #zero depth for reference
@@ -93,13 +93,11 @@ for epoch in range(num_epochs):
         diff_state = diff_state*w
         smooth_loss = torch.sum(diff_state**2) 
 
-        jerk = error_data[:,2:,:] - 2* error_data[:,1:-1,:] + error_data[:,:-2,:]
-        # w = jerk.mean(dim=(0, 1)).unsqueeze(0)
-        # print(w.shape)
+
+        ###may use pred_new_state_seq instead
+        jerk = pred_new_state_seq[:,2:,:] - 2* pred_new_state_seq[:,1:-1,:] + pred_new_state_seq[:,:-2,:]
         jerk = jerk *w
-
         jerk_loss = torch.sum(jerk **2)   
-
 
         loss = pred_loss + 0.5 * jerk_loss + 0.1 *smooth_loss
         optimizer.zero_grad()
@@ -124,47 +122,47 @@ for epoch in range(num_epochs):
         batch_count += 1  
         # print(f"batch no: {batch_count}/{len(train_loader)}")
 
-        # if (epoch % 5 == 0) and (epoch>20) :
-        #     fig.suptitle(f"batch no: {batch_count}/{len(train_loader)}, epoch: {epoch}", fontsize=16)
+        if (epoch % 10 == 0) and (epoch>20) :
+            fig.suptitle(f"batch no: {batch_count}/{len(train_loader)}, epoch: {epoch}", fontsize=16)
 
-        #     ax1.set_title("depth")
-        #     ax2.set_title("pitch")
-        #     ax3.set_title("yaw")
-        #     ax4.set_title("surge")
-        #     ax21.set_title("surge")
-        #     ax22.set_title("sway")
-        #     ax23.set_title("heave stern")
-        #     ax24.set_title("heave bow")
+            ax1.set_title("depth")
+            ax2.set_title("pitch")
+            ax3.set_title("yaw")
+            ax4.set_title("surge")
+            ax21.set_title("surge")
+            ax22.set_title("sway")
+            ax23.set_title("heave stern")
+            ax24.set_title("heave bow")
 
-        #     # ax1.set_ylim(-7, 1)
-        #     # ax2.set_ylim(-0.3, 0.3)
-        #     # ax3.set_ylim(-3.2, 3.2)
-        #     # ax4.set_ylim(-1, 1)
-        #     ax21.set_ylim(-1, 1)
-        #     ax22.set_ylim(-1, 1)
-        #     ax23.set_ylim(-1, 1)
-        #     ax24.set_ylim(-1, 1)
+            # ax1.set_ylim(-7, 1)
+            # ax2.set_ylim(-0.3, 0.3)
+            # ax3.set_ylim(-3.2, 3.2)
+            # ax4.set_ylim(-1, 1)
+            ax21.set_ylim(-1, 1)
+            ax22.set_ylim(-1, 1)
+            ax23.set_ylim(-1, 1)
+            ax24.set_ylim(-1, 1)
             
-        #     axes = [ax1, ax2, ax3, ax4]
-        #     for i, ax in enumerate(axes):
-        #         ax.plot(actual_controlled_state[1,:,i].detach().cpu().numpy(), label='Label (optional)', color='blue', linestyle='-', marker='o')  # Customize as needed
-        #         ax.plot(pred_controlled_state[1,:,i].detach().cpu().numpy(), label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
-        #         # ax.axhline(y=0, color='black', linewidth=2.0, zorder=5)  # You can adjust color and width
+            axes = [ax1, ax2, ax3, ax4]
+            for i, ax in enumerate(axes):
+                ax.plot(actual_controlled_state[1,:,i].detach().cpu().numpy(), label='Label (optional)', color='blue', linestyle='-', marker='o')  # Customize as needed
+                ax.plot(pred_controlled_state[1,:,i].detach().cpu().numpy(), label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
+                # ax.axhline(y=0, color='black', linewidth=2.0, zorder=5)  # You can adjust color and width
 
-        #     axes = [ax21, ax22, ax23, ax24]
-        #     for i, ax in enumerate(axes):
-        #         ax.plot(action_seq[1,:,i].detach().cpu().numpy() , label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
-        #         # ax.axhline(y=0, color='black', linewidth=2.0, zorder=5)  # You can adjust color and width
+            axes = [ax21, ax22, ax23, ax24]
+            for i, ax in enumerate(axes):
+                ax.plot(action_seq[1,:,i].detach().cpu().numpy() , label='Label (optional)', color='red', linestyle='-', marker='o')  # Customize as needed
+                # ax.axhline(y=0, color='black', linewidth=2.0, zorder=5)  # You can adjust color and width
 
-        #     plt.pause(0.1)
-        #     ax1.clear()
-        #     ax2.clear()
-        #     ax3.clear()
-        #     ax4.clear()
-        #     ax21.clear()
-        #     ax22.clear()
-        #     ax23.clear()
-        #     ax24.clear()     
+            plt.pause(0.1)
+            ax1.clear()
+            ax2.clear()
+            ax3.clear()
+            ax4.clear()
+            ax21.clear()
+            ax22.clear()
+            ax23.clear()
+            ax24.clear()     
 
     # Compute mean losses
     mean_train_loss = total_train_loss / len(train_loader)

@@ -5,7 +5,7 @@ from network.utilites import PositionalEncoding
 #output a sequence of future actions
 
 class VehicleActor(nn.Module):
-    def __init__(self, state_dim, action_dim, d_model=128, nhead=4, num_layers=3, dropout=0.1, max_action=1):
+    def __init__(self, state_dim, error_dim, action_dim, d_model=128, nhead=4, num_layers=3, dropout=0.1, max_action=1):
         super().__init__()
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -18,6 +18,9 @@ class VehicleActor(nn.Module):
 
         # Input projection: state and action → d_model
         self.state_encoder = nn.Linear(state_dim, d_model)
+        self.error_encoder = nn.Linear(error_dim, d_model)
+        self.action_encoder = nn.Linear(action_dim, d_model)
+
         self.in_mlp = nn.Linear(d_model, d_model)
         self.layernorm = nn.LayerNorm(d_model)
 
@@ -33,22 +36,27 @@ class VehicleActor(nn.Module):
             nn.ReLU(),
             nn.Linear(d_model, action_dim)
         )
-    def forward(self, current_state, seq_len):
+    def forward(self, current_state, error_state, action_state, seq_len):
 
         B = current_state.size(0)
         T = seq_len
+        device = current_state.device
         # current_state = self.layernorm(current_state)
         # Repeat current state for each timestep
         state_token = self.state_encoder(current_state).repeat(1, T, 1)  # [B, T, d_model]
+        error_token = self.error_encoder(error_state).repeat(1,T,1)
+        action_token = self.action_encoder(action_state).repeat(1,T,1)
+        causal_mask = torch.triu(torch.ones(T, T, device=device), diagonal=1).bool()  # or float('-inf') version
+
         # Encode actions
         # Combine state and action embeddings
-        x = state_token  # [B, T, d_model]
+        x = state_token + error_token + action_token # [B, T, d_model]
         x = self.in_mlp(x)
         x = self.layernorm(x)
 
         x = self.pos_encoding(x)
         # Pass through transformer
-        x = self.transformer_encoder(x)  # [B, T, d_model]
+        x = self.transformer_encoder(x,causal_mask)  # [B, T, d_model]
 
         # Decode into future states
         action_seq = self.state_decoder(x)  # [B, T, state_dim]
