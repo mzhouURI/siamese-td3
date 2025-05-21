@@ -24,7 +24,8 @@ def get_cos_sin(data, ind):
     return np.column_stack((cos_ang,sin_ang))
 
 def LoadData(filename, val_ratio, batch_size, seq_len):
-    data = np.loadtxt(filename, delimiter=',')
+    # data = np.loadtxt(filename, delimiter=',')
+    data = np.vstack([np.loadtxt(fname, delimiter=',') for fname in filename])
     # print(data.shape)
     # exit()
     # 0:12: t, ex, ey, ez, e_roll, e_pitch, e_yaw, e_u, e_v, e_w, e_p, e_q, e_r

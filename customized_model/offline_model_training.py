@@ -13,7 +13,9 @@ from network.utilites import LoadData, GetData
 seq_len = 50       # sequence length for transformer
 batch_size =8    # number of sequences per batch
 num_epochs = 100    # how many passes over the dataset
-train_loader, val_loader, state_dim, error_dim, action_dim = LoadData("offline_data/filename2.csv", 0.1, batch_size, seq_len)
+filenames = ["offline_data/filename2.csv", "offline_data/filename3.csv"]
+
+train_loader, val_loader, state_dim, error_dim, action_dim = LoadData(filenames, 0.1, batch_size, seq_len)
 
 # print(state_dim)
 
@@ -122,7 +124,7 @@ for epoch in range(num_epochs):
         batch_count += 1  
         # print(f"batch no: {batch_count}/{len(train_loader)}")
 
-        if (epoch % 10 == 0) and (epoch>20) :
+        if (epoch % 10 == 0) and (epoch>50) :
             fig.suptitle(f"batch no: {batch_count}/{len(train_loader)}, epoch: {epoch}", fontsize=16)
 
             ax1.set_title("depth")

@@ -72,7 +72,7 @@ class MPCROS(Node):
         self.state = flatten_state(state)
         self.error_state = flatten_state(error_state)
         self.imu_state = flatten_state(imu_state)
-        print(self.imu_state)
+
         self.prev_action = torch.zeros(1,4)
         self.prev_error_state = torch.zeros(1,len(self.error_state))
         self.prev_state = torch.zeros(1,len(self.state))
@@ -82,14 +82,16 @@ class MPCROS(Node):
 
         self.state_buffer = collections.deque(maxlen=self.window_size)
         self.error_state_buffer = collections.deque(maxlen=self.window_size)
-        print( len(self.state))
-        print(len(self.error_state))
-        print(len(self.imu_state))
-        # exit()
+
+        self.max_action = torch.tensor([0.7, 0.6, 0.5, 0.5])  # example per-dimension limits
+
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.error_integral = torch.zeros(1,6)
+
         self.model = VehicleActor(state_dim = len(self.state)+len(self.imu_state), error_dim=len(self.error_state), action_dim = 4,
-                        d_model = 256, nhead = 8, num_layers=3, max_action= 0.7, dropout=0.05
+                        d_model = 256, nhead = 8, num_layers=3, max_action= self.max_action.to(self.device), dropout=0.05
                         ).to(self.device)
         self.model.load_state_dict(torch.load('offline_model/actor.pth', map_location=self.device))
 
@@ -119,9 +121,12 @@ class MPCROS(Node):
         #update setpoint
         self.set_point.position.z = random.uniform(-5,-1)
         self.set_point.orientation.z = random.uniform(-3.14, 3.14)
-        self.set_point.velocity.x = random.uniform(0.0, 0.5)
+        self.set_point.velocity.x = random.uniform(0.0, 0.4)
         self.total_reward = 0
         self.set_point_update_flag = True
+
+        self.error_integral = torch.zeros(1,6)
+        
 
     
     def set_point_publish(self):
@@ -173,15 +178,29 @@ class MPCROS(Node):
         new_state = torch.cat([new_state, imu_state], dim = 1)
 
         new_error_state = torch.tensor(self.error_state, dtype=torch.float32).unsqueeze(0)
+
         #action
         zero_depth_initial_state = new_state.clone()
         zero_depth_initial_state[:,0] = 0
 
-        prev_action = self.prev_action.detach().cpu()
+        prev_action = self.prev_action.to(self.device)
+        zero_depth_initial_state = zero_depth_initial_state.to(self.device)
+        new_error_state = new_error_state.to(self.device)
+        self.error_integral = self.error_integral.to(self.device)
+
+
+        # w_i = torch.tensor([[0, 0, 0, 0, 0, 1]], dtype=torch.float32) 
+        # w_i = w_i.to(self.device) 
+
+        # print(w_i.device)
+        # print(self.error_integral.device)
+        # print(new_error_state.device)
+        # self.error_integral = self.error_integral + new_error_state*w_i*0.1
+
+        # print(self.error_integral)
         # print(prev_action.shape)
         # actor_states= torch.cat([zero_depth_initial_state, new_error_state, prev_action], dim = 1)
         # actor_states = actor_states.to(self.device)
-    
         action = self.model.forward(zero_depth_initial_state, new_error_state, prev_action, self.window_size)
         # #pitch the first action from the sequence and command to the vehicle
         msg = Float64MultiArray()

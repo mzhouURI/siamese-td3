@@ -9,10 +9,13 @@ from torch.utils.data import Dataset, DataLoader, Subset, random_split
 from network.utilites import LoadData, GetData, safe_atan2, angular_difference
 
 ###load data into batches
-seq_len = 20       # sequence length for transformer
+seq_len = 30       # sequence length for transformer
+action_len = 10
 batch_size = 2    # number of sequences per batch
 num_epochs = 20    # how many passes over the dataset
-train_loader, val_loader, state_dim, error_dim, action_dim = LoadData("offline_data/filename1.csv", 0.2, batch_size, seq_len)
+filenames = ["offline_data/filename2.csv", "offline_data/filename3.csv"]
+
+train_loader, val_loader, state_dim, error_dim, action_dim = LoadData(filenames, 0.1, batch_size, seq_len)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
@@ -22,14 +25,17 @@ max_action = torch.tensor([0.6, 0.6, 0.5, 0.5]).to(device)
 # model = VehicleActor(state_dim = state_dim+error_dim, action_dim = action_dim,
 #                         hidden_dim = 64, rnn_layers = 2,
 #                         ).to(device)
-actor = VehicleActor(state_dim = state_dim+error_dim, action_dim = action_dim,
-                        d_model = 256, nhead = 8, num_layers=4, max_action= 0.7, dropout=0.05
+max_action = torch.tensor([0.7, 0.6, 0.5, 0.5])  # example per-dimension limits
+
+actor = VehicleActor(state_dim = state_dim, error_dim = error_dim, action_dim = action_dim,
+                        d_model = 256, nhead = 8, num_layers=3, max_action= max_action.to(device), dropout=0.05
                         ).to(device)
 actor.load_state_dict(torch.load('offline_model/actor.pth', map_location=device))
 
 Vmodel = VehicleModeler(state_dim = state_dim, action_dim = action_dim,
-                 d_model = 128, nhead = 8, num_layers = 3, dropout=0.0
+                 d_model = 256, nhead = 8, num_layers = 3, dropout=0.0
                  ).to(device)
+
 Vmodel.load_state_dict(torch.load('offline_model/modeler.pth', map_location=device))
 
 Vmodel.eval()
@@ -70,7 +76,13 @@ for batch in val_loader:
     zero_depth_initial_state[:,:,0] = 0
     actor_states= torch.cat([zero_depth_initial_state, initial_error_state], dim = 2)
 
-    pred_actions= actor.forward(actor_states, seq_len)  # Your model takes (state, error) as inputs
+    current_action = action_seq[:,0,:].unsqueeze(1)
+
+    pred_actions= actor.forward(zero_depth_initial_state, initial_error_state, current_action, action_len)  # Your model takes (state, error) as inputs
+
+    last_action = pred_actions[:, -1:, :]  # shape: (B, 1, D)
+    pad = last_action.repeat(1, seq_len - action_len, 1)
+    pred_actions = torch.cat([pred_actions, pad], dim=1)
 
     pred_states = Vmodel(zero_depth_initial_state, pred_actions)
     pred_states [:,:,0] = pred_states[:,:,0] + initial_state[:,:,0]
